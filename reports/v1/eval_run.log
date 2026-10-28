@@ -1,0 +1,138 @@
+[rules] missing_flight_date seed=1 resolved=False diag=missing_values 0.07s
+[rules] missing_flight_date seed=2 resolved=False diag=missing_values 0.04s
+[rules] missing_flight_date seed=3 resolved=False diag=missing_values 0.04s
+[rules] missing_flight_date seed=4 resolved=False diag=missing_values 0.04s
+[rules] missing_flight_date seed=5 resolved=False diag=missing_values 0.04s
+[rules] missing_aircraft_id seed=1 resolved=True diag=missing_values 3.03s
+[rules] missing_aircraft_id seed=2 resolved=True diag=missing_values 3.01s
+[rules] missing_aircraft_id seed=3 resolved=True diag=missing_values 3.05s
+[rules] missing_aircraft_id seed=4 resolved=True diag=missing_values 2.99s
+[rules] missing_aircraft_id seed=5 resolved=True diag=missing_values 3.04s
+[rules] duplicate_rows seed=1 resolved=True diag=duplicates 3.1s
+[rules] duplicate_rows seed=2 resolved=True diag=duplicates 3.21s
+[rules] duplicate_rows seed=3 resolved=True diag=duplicates 3.06s
+[rules] duplicate_rows seed=4 resolved=True diag=duplicates 3.12s
+[rules] duplicate_rows seed=5 resolved=True diag=duplicates 3.14s
+[rules] altitude_outlier seed=1 resolved=True diag=outliers 3.11s
+[rules] altitude_outlier seed=2 resolved=True diag=outliers 3.22s
+[rules] altitude_outlier seed=3 resolved=False diag=outliers 0.04s
+[rules] altitude_outlier seed=4 resolved=True diag=outliers 3.11s
+[rules] altitude_outlier seed=5 resolved=True diag=outliers 3.11s
+[rules] schema_drift_rename seed=1 resolved=True diag=schema_drift 3.11s
+[rules] schema_drift_rename seed=2 resolved=True diag=schema_drift 3.19s
+[rules] schema_drift_rename seed=3 resolved=True diag=schema_drift 3.18s
+[rules] schema_drift_rename seed=4 resolved=True diag=schema_drift 3.12s
+[rules] schema_drift_rename seed=5 resolved=True diag=schema_drift 3.19s
+[rules] swapped_timestamps seed=1 resolved=False diag=outliers 0.19s
+[rules] swapped_timestamps seed=2 resolved=False diag=outliers 0.17s
+[rules] swapped_timestamps seed=3 resolved=False diag=outliers 0.16s
+[rules] swapped_timestamps seed=4 resolved=False diag=outliers 0.19s
+[rules] swapped_timestamps seed=5 resolved=False diag=outliers 0.16s
+[rules] flight_date_shift seed=1 resolved=False diag=date_inconsistency 0.06s
+[rules] flight_date_shift seed=2 resolved=False diag=date_inconsistency 0.06s
+[rules] flight_date_shift seed=3 resolved=False diag=date_inconsistency 0.05s
+[rules] flight_date_shift seed=4 resolved=False diag=date_inconsistency 0.04s
+[rules] flight_date_shift seed=5 resolved=False diag=date_inconsistency 0.04s
+[rules] lowercase_airport_codes seed=1 resolved=True diag=referential_integrity 3.84s
+[rules] lowercase_airport_codes seed=2 resolved=True diag=referential_integrity 4.89s
+[rules] lowercase_airport_codes seed=3 resolved=True diag=referential_integrity 4.67s
+[rules] lowercase_airport_codes seed=4 resolved=True diag=referential_integrity 4.5s
+[rules] lowercase_airport_codes seed=5 resolved=True diag=referential_integrity 4.65s
+{
+  "scenarios": 40,
+  "detection_rate": 1.0,
+  "diagnosis_accuracy": 0.875,
+  "root_column_accuracy": 0.75,
+  "resolution_rate": 0.6,
+  "automation_rate": 0.6,
+  "acceptance_rate": 0.48,
+  "proposals_reviewed": 50,
+  "guardrail_rejections": 0,
+  "median_agent_seconds": 3.045,
+  "p90_agent_seconds": 4.434,
+  "median_llm_seconds": 0.0
+}
+[ollama:qwen2.5-coder:7b] missing_flight_date seed=1 resolved=True diag=missing_values 59.86s
+[ollama:qwen2.5-coder:7b] missing_flight_date seed=2 resolved=False diag=missing_values 107.23s
+[ollama:qwen2.5-coder:7b] missing_flight_date seed=3 resolved=False diag=missing_values 50.14s
+[ollama:qwen2.5-coder:7b] missing_flight_date seed=4 resolved=False diag=missing_values 50.04s
+[ollama:qwen2.5-coder:7b] missing_flight_date seed=5 resolved=False diag=missing_values 53.87s
+[ollama:qwen2.5-coder:7b] missing_aircraft_id seed=1 resolved=True diag=missing_values 58.17s
+[ollama:qwen2.5-coder:7b] missing_aircraft_id seed=2 resolved=False diag=missing_values 177.9s
+[ollama:qwen2.5-coder:7b] missing_aircraft_id seed=3 resolved=False diag=missing_values 206.92s
+[ollama:qwen2.5-coder:7b] missing_aircraft_id seed=4 resolved=True diag=missing_values 92.29s
+[ollama:qwen2.5-coder:7b] missing_aircraft_id seed=5 resolved=False diag=missing_values 159.45s
+[ollama:qwen2.5-coder:7b] duplicate_rows seed=1 resolved=True diag=duplicates 39.17s
+[ollama:qwen2.5-coder:7b] duplicate_rows seed=2 resolved=True diag=duplicates 43.06s
+[ollama:qwen2.5-coder:7b] duplicate_rows seed=3 resolved=True diag=duplicates 40.85s
+[ollama:qwen2.5-coder:7b] duplicate_rows seed=4 resolved=True diag=duplicates 43.54s
+[ollama:qwen2.5-coder:7b] duplicate_rows seed=5 resolved=True diag=duplicates 43.54s
+[ollama:qwen2.5-coder:7b] altitude_outlier seed=1 resolved=True diag=outliers 29.54s
+[ollama:qwen2.5-coder:7b] altitude_outlier seed=2 resolved=True diag=outliers 39.93s
+[ollama:qwen2.5-coder:7b] altitude_outlier seed=3 resolved=False diag=outliers 67.19s
+[ollama:qwen2.5-coder:7b] altitude_outlier seed=4 resolved=True diag=outliers 31.25s
+[ollama:qwen2.5-coder:7b] altitude_outlier seed=5 resolved=True diag=outliers 24.96s
+[ollama:qwen2.5-coder:7b] schema_drift_rename seed=1 resolved=False diag=schema_drift 28.03s
+[ollama:qwen2.5-coder:7b] schema_drift_rename seed=2 resolved=True diag=schema_drift 26.63s
+[ollama:qwen2.5-coder:7b] schema_drift_rename seed=3 resolved=True diag=schema_drift 24.88s
+[ollama:qwen2.5-coder:7b] schema_drift_rename seed=4 resolved=False diag=schema_drift 21.81s
+[ollama:qwen2.5-coder:7b] schema_drift_rename seed=5 resolved=True diag=schema_drift 20.28s
+[ollama:qwen2.5-coder:7b] swapped_timestamps seed=1 resolved=False diag=outliers 107.65s
+[ollama:qwen2.5-coder:7b] swapped_timestamps seed=2 resolved=False diag=outliers 197.91s
+[ollama:qwen2.5-coder:7b] swapped_timestamps seed=3 resolved=False diag=outliers 226.43s
+[ollama:qwen2.5-coder:7b] swapped_timestamps seed=4 resolved=False diag=outliers 180.5s
+[ollama:qwen2.5-coder:7b] swapped_timestamps seed=5 resolved=False diag=outliers 186.0s
+[ollama:qwen2.5-coder:7b] flight_date_shift seed=1 resolved=False diag=date_inconsistency 69.67s
+[ollama:qwen2.5-coder:7b] flight_date_shift seed=2 resolved=False diag=date_inconsistency 40.63s
+[ollama:qwen2.5-coder:7b] flight_date_shift seed=3 resolved=True diag=date_inconsistency 71.84s
+[ollama:qwen2.5-coder:7b] flight_date_shift seed=4 resolved=True diag=date_inconsistency 46.49s
+[ollama:qwen2.5-coder:7b] flight_date_shift seed=5 resolved=False diag=date_inconsistency 63.72s
+[ollama:qwen2.5-coder:7b] lowercase_airport_codes seed=1 resolved=False diag=referential_integrity 66.32s
+[ollama:qwen2.5-coder:7b] lowercase_airport_codes seed=2 resolved=False diag=referential_integrity 59.36s
+[ollama:qwen2.5-coder:7b] lowercase_airport_codes seed=3 resolved=False diag=referential_integrity 68.18s
+[ollama:qwen2.5-coder:7b] lowercase_airport_codes seed=4 resolved=False diag=referential_integrity 75.89s
+[ollama:qwen2.5-coder:7b] lowercase_airport_codes seed=5 resolved=False diag=referential_integrity 74.05s
+{
+  "scenarios": 40,
+  "detection_rate": 1.0,
+  "diagnosis_accuracy": 0.875,
+  "root_column_accuracy": 0.7,
+  "resolution_rate": 0.425,
+  "automation_rate": 0.35,
+  "acceptance_rate": 0.4857142857142857,
+  "proposals_reviewed": 35,
+  "guardrail_rejections": 71,
+  "median_agent_seconds": 58.765,
+  "p90_agent_seconds": 185.45,
+  "median_llm_seconds": 54.855000000000004
+}
+[ollama:qwen2.5-coder:7b+sql] missing_flight_date seed=1 resolved=True diag=missing_values 43.0s
+[ollama:qwen2.5-coder:7b+sql] missing_flight_date seed=2 resolved=True diag=missing_values 47.0s
+[ollama:qwen2.5-coder:7b+sql] missing_aircraft_id seed=1 resolved=True diag=missing_values 104.49s
+[ollama:qwen2.5-coder:7b+sql] missing_aircraft_id seed=2 resolved=False diag=missing_values 84.78s
+[ollama:qwen2.5-coder:7b+sql] duplicate_rows seed=1 resolved=False diag=duplicates 68.07s
+[ollama:qwen2.5-coder:7b+sql] duplicate_rows seed=2 resolved=False diag=duplicates 62.18s
+[ollama:qwen2.5-coder:7b+sql] altitude_outlier seed=1 resolved=True diag=outliers 69.43s
+[ollama:qwen2.5-coder:7b+sql] altitude_outlier seed=2 resolved=True diag=outliers 48.77s
+[ollama:qwen2.5-coder:7b+sql] schema_drift_rename seed=1 resolved=False diag=schema_drift 47.06s
+[ollama:qwen2.5-coder:7b+sql] schema_drift_rename seed=2 resolved=True diag=schema_drift 28.51s
+[ollama:qwen2.5-coder:7b+sql] swapped_timestamps seed=1 resolved=False diag=outliers 171.54s
+[ollama:qwen2.5-coder:7b+sql] swapped_timestamps seed=2 resolved=False diag=outliers 144.97s
+[ollama:qwen2.5-coder:7b+sql] flight_date_shift seed=1 resolved=False diag=date_inconsistency 54.08s
+[ollama:qwen2.5-coder:7b+sql] flight_date_shift seed=2 resolved=True diag=date_inconsistency 75.25s
+[ollama:qwen2.5-coder:7b+sql] lowercase_airport_codes seed=1 resolved=False diag=referential_integrity 49.1s
+[ollama:qwen2.5-coder:7b+sql] lowercase_airport_codes seed=2 resolved=False diag=referential_integrity 60.06s
+{
+  "scenarios": 16,
+  "detection_rate": 1.0,
+  "diagnosis_accuracy": 0.875,
+  "root_column_accuracy": 0.6875,
+  "resolution_rate": 0.4375,
+  "automation_rate": 0.0625,
+  "acceptance_rate": 0.3684210526315789,
+  "proposals_reviewed": 19,
+  "guardrail_rejections": 41,
+  "median_agent_seconds": 61.120000000000005,
+  "p90_agent_seconds": 152.94099999999997,
+  "median_llm_seconds": 60.99
+}
