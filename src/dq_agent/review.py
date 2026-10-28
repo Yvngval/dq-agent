@@ -161,7 +161,8 @@ class CLIReviewer:
         while True:
             choice = (
                 c.input(
-                    "[bold][a][/]pprouver · [bold][r][/]ejeter · [bold][m][/]odifier le SQL · [bold][e][/]scalader > "
+                    "[bold]\\[a][/]pprouver · [bold]\\[r][/]ejeter · [bold]\\[m][/]odifier le SQL · "
+                    "[bold]\\[e][/]scalader > "
                 )
                 .strip()
                 .lower()
@@ -201,8 +202,8 @@ class CLIReviewer:
         while True:
             choice = (
                 c.input(
-                    "[bold][a][/]jouter le test · [bold][r][/]ejeter · [bold][m][/]odifier la condition · "
-                    "[bold][e][/]scalader > "
+                    "[bold]\\[a][/]jouter le test · [bold]\\[r][/]ejeter · [bold]\\[m][/]odifier la condition · "
+                    "[bold]\\[e][/]scalader > "
                 )
                 .strip()
                 .lower()

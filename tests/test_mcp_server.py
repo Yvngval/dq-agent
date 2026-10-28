@@ -2,8 +2,11 @@ import asyncio
 import json
 
 
-def test_mcp_tools_are_read_only_views(warehouse):
+def test_mcp_tools_are_read_only_views(clean):
+    from dq_agent import dbt_runner
     from dq_agent.mcp_server import server
+
+    dbt_runner.build()  # test_results lit les artefacts du dernier dbt build
 
     async def scenario():
         names = {t.name for t in await server.list_tools()}
