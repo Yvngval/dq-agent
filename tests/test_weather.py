@@ -2,9 +2,13 @@
 
 Le projet dbt d'exemple est copié dans un dossier temporaire ; seules les variables d'environnement
 (DQ_DBT_DIR, DQ_DATA_DIR, DQ_SCENARIOS...) désignent le projet surveillé.
+
+Chaque test tourne sur DuckDB, puis sur PostgreSQL si DQ_TEST_POSTGRES_URL désigne une base de test
+(elle est vidée) et que dbt-postgres est installé (`uv sync --extra postgres`).
 """
 
 import importlib.util
+import os
 import shutil
 from pathlib import Path
 
@@ -14,7 +18,7 @@ from dq_agent import anomalies, config, dbt_runner, evaluate, reasoners, referen
 from dq_agent.graph import run_agent
 from dq_agent.reasoners import RulesReasoner
 from dq_agent.review import OracleReviewer, compare_to_expected
-from dq_agent.warehouse import connect
+from dq_agent.warehouse import connect, warehouse
 
 WEATHER = Path(__file__).resolve().parents[1] / "examples" / "weather"
 
@@ -35,9 +39,33 @@ def _module(name: str):
 V1_SCENARIOS = [n for n, s in _module("scenarios").SCENARIOS.items() if not s.expected_finding]
 
 
-@pytest.fixture(scope="module")
-def weather(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("weather")
+POSTGRES_URL = os.getenv("DQ_TEST_POSTGRES_URL")
+SCHEMAS = ("raw", "snapshot", "audit", "eval", "staging", "marts", "test_failures")
+
+
+def _reset_postgres(url: str) -> None:
+    import psycopg2
+
+    with psycopg2.connect(url) as pg, pg.cursor() as cur:
+        for schema in SCHEMAS:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        "duckdb",
+        pytest.param(
+            "postgres",
+            marks=pytest.mark.skipif(
+                not POSTGRES_URL or importlib.util.find_spec("dbt.adapters.postgres") is None,
+                reason="DQ_TEST_POSTGRES_URL non défini ou dbt-postgres absent",
+            ),
+        ),
+    ],
+)
+def weather(request, tmp_path_factory):
+    tmp = tmp_path_factory.mktemp(f"weather-{request.param}")
     shutil.copytree(WEATHER / "dbt", tmp / "dbt", ignore=shutil.ignore_patterns("target", "logs", "generated"))
     env = {
         "DQ_DBT_DIR": tmp / "dbt",
@@ -46,6 +74,9 @@ def weather(tmp_path_factory):
         "DQ_DBT_TARGET": tmp / "target",
         "DQ_SCENARIOS": WEATHER / "scenarios.py",
     }
+    if request.param == "postgres":
+        _reset_postgres(POSTGRES_URL)
+        env.update(DQ_WAREHOUSE=POSTGRES_URL, DQ_DBT_PROFILE_TARGET="postgres")
     with pytest.MonkeyPatch.context() as mp:
         for name, value in env.items():
             mp.setenv(name, str(value))
@@ -55,7 +86,7 @@ def weather(tmp_path_factory):
             reference.save()
             result = dbt_runner.build()
             assert result.failures == [], [f.name for f in result.failures]
-            yield
+            yield request.param
         finally:
             _clear_caches()
 
@@ -69,6 +100,7 @@ def weather_clean(weather):
 
 def test_agent_reads_the_project_from_dbt(weather):
     assert dbt_runner.writable_tables() == ("raw.readings", "raw.stations")
+    assert warehouse().kind == weather
     assert "weather" in config.agent_vars()["domain"]
     assert set(anomalies.suites()["v2"]) == {"sensor_model_lowercase", "future_readings", "station_outage"}
 

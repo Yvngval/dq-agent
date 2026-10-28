@@ -1,7 +1,7 @@
 """Second jeu de données : relevés horaires de stations météo automatiques (synthétiques, graine fixe).
 
 Il sert à montrer que l'agent ne dépend pas du domaine aérien : autre schéma, autres noms de colonnes,
-autres pannes. Écrit dans l'entrepôt désigné par DQ_DATA_DIR / DQ_DUCKDB_PATH :
+autres pannes. Écrit dans l'entrepôt désigné par DQ_DATA_DIR / DQ_DUCKDB_PATH, ou DQ_WAREHOUSE (PostgreSQL) :
 
     DQ_DATA_DIR=examples/weather/data PYTHONPATH=src uv run python examples/weather/generate.py
 """
@@ -13,7 +13,7 @@ import datetime as dt
 import math
 import random
 
-from dq_agent.warehouse import connect
+from dq_agent.warehouse import connect, replace_table
 
 # (ville, pays, latitude, longitude, altitude en m, température moyenne en mars en °C)
 CITIES = [
@@ -65,23 +65,27 @@ def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict
                     )
     with connect() as con:
         con.execute("CREATE SCHEMA IF NOT EXISTS raw")
+        # Tables temporaires côté DuckDB, puis copie dans la base surveillée (DuckDB, PostgreSQL...).
         con.execute(
-            "CREATE OR REPLACE TABLE raw.stations (_row_id BIGINT, station_code VARCHAR, station_name VARCHAR, "
-            "country VARCHAR, latitude DOUBLE, longitude DOUBLE, elevation_m DOUBLE)"
+            "CREATE OR REPLACE TEMP TABLE landed_stations (_row_id BIGINT, station_code VARCHAR, "
+            "station_name VARCHAR, country VARCHAR, latitude DOUBLE, longitude DOUBLE, elevation_m DOUBLE)"
         )
         con.executemany(
-            "INSERT INTO raw.stations VALUES (?, ?, ?, ?, ?, ?, ?)", [(i + 1, *s) for i, s in enumerate(stations)]
+            "INSERT INTO temp.landed_stations VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(i + 1, *s) for i, s in enumerate(stations)],
         )
+        replace_table(con, "raw.stations", "SELECT * FROM temp.landed_stations")
         con.execute(
             "CREATE OR REPLACE TEMP TABLE landed (station_code VARCHAR, observed_at TIMESTAMP, temperature_c DOUBLE, "
             "humidity_pct DOUBLE, pressure_hpa DOUBLE, wind_speed_kmh DOUBLE, precipitation_mm DOUBLE, "
             "sensor_model VARCHAR)"
         )
-        con.executemany("INSERT INTO landed VALUES (?, ?, ?, ?, ?, ?, ?, ?)", readings)
+        con.executemany("INSERT INTO temp.landed VALUES (?, ?, ?, ?, ?, ?, ?, ?)", readings)
         # Colonnes dérivées calculées par le « système source » : jour UTC et température en Fahrenheit.
-        con.execute(
-            """CREATE OR REPLACE TABLE raw.readings AS
-            SELECT row_number() OVER (ORDER BY observed_at, station_code) AS _row_id,
+        replace_table(
+            con,
+            "raw.readings",
+            """SELECT row_number() OVER (ORDER BY observed_at, station_code) AS _row_id,
                    'RD' || lpad(CAST(row_number() OVER (ORDER BY observed_at, station_code) AS VARCHAR), 7, '0')
                        AS reading_id,
                    station_code,
@@ -90,7 +94,7 @@ def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict
                    temperature_c,
                    round(temperature_c * 9 / 5 + 32, 1) AS temperature_f,
                    humidity_pct, pressure_hpa, wind_speed_kmh, precipitation_mm, sensor_model
-            FROM landed"""
+            FROM temp.landed""",
         )
         return {
             "raw.stations": con.execute("SELECT count(*) FROM raw.stations").fetchone()[0],

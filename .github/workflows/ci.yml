@@ -7,10 +7,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Base PostgreSQL de test : les tests du jeu météo tournent aussi dessus.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dq_agent_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       PYTHONPATH: ${{ github.workspace }}/src
       DQ_LLM_PROVIDER: rules
       DQ_DUCKDB_PATH: ${{ github.workspace }}/data/warehouse.duckdb
+      DQ_TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/dq_agent_test
     steps:
       - uses: actions/checkout@v4
 
@@ -19,12 +30,12 @@ jobs:
           python-version: "3.12"
 
       - name: Installer les dépendances
-        run: uv sync --frozen
+        run: uv sync --frozen --extra postgres
 
       - name: Lint
         run: uv run --no-sync ruff check src tests examples scripts
 
-      - name: Tests (pytest, sur données synthétiques)
+      - name: Tests (pytest, sur données synthétiques, DuckDB et PostgreSQL)
         run: uv run --no-sync pytest -q
 
       # Les données OpenSky ne sont pas redistribuables : la CI utilise des vols synthétiques.

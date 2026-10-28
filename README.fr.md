@@ -6,6 +6,7 @@
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"></a>
   <a href="https://www.getdbt.com"><img src="https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white" alt="dbt"></a>
   <a href="https://duckdb.org"><img src="https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black" alt="DuckDB"></a>
+  <a href="https://www.postgresql.org"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL"></a>
   <a href="https://langchain-ai.github.io/langgraph/"><img src="https://img.shields.io/badge/LangGraph-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white" alt="LangGraph"></a>
   <a href="https://ollama.com"><img src="https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white" alt="Ollama"></a>
   <a href="https://scikit-learn.org"><img src="https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikitlearn&logoColor=white" alt="scikit-learn"></a>
@@ -14,7 +15,7 @@
 
 > **Un agent LangGraph qui surveille un pipeline dbt : il trouve la cause des tests en échec, propose une correction SQL, la fait valider par un humain, l'applique et relance les tests. Quand tout est vert, il cherche aussi les anomalies qu'aucun test ne prévoit et propose les tests manquants.**
 
-Un pipeline de données casse rarement en silence : un fichier arrive avec une colonne renommée, un lot est chargé deux fois, un capteur envoie des altitudes impossibles. Les tests dbt le signalent, mais il faut encore comprendre la cause et corriger, et les tests ne voient que les erreurs qu'on a prévues. Ce projet automatise ce travail sur des données réelles de trafic aérien (OpenSky Network, vols touchant la France en avril 2020), sans jamais rien modifier sans accord humain, et mesure ce que l'agent réussit vraiment sur 13 types d'anomalies injectées. Le même agent surveille aussi un second projet dbt, des relevés de stations météo, sans une ligne de code en plus.
+Un pipeline de données casse rarement en silence : un fichier arrive avec une colonne renommée, un lot est chargé deux fois, un capteur envoie des altitudes impossibles. Les tests dbt le signalent, mais il faut encore comprendre la cause et corriger, et les tests ne voient que les erreurs qu'on a prévues. Ce projet automatise ce travail sur des données réelles de trafic aérien (OpenSky Network, vols touchant la France en avril 2020), sans jamais rien modifier sans accord humain, et mesure ce que l'agent réussit vraiment sur 13 types d'anomalies injectées. Le même agent surveille aussi un second projet dbt, des relevés de stations météo, sans une ligne de code en plus, sur DuckDB comme sur PostgreSQL.
 
 <p align="center">
   <a href="#résultats">Résultats</a> ·
@@ -23,6 +24,7 @@ Un pipeline de données casse rarement en silence : un fichier arrive avec une c
   <a href="#données">Données</a> ·
   <a href="#démarrage">Démarrage</a> ·
   <a href="#serveur-mcp">Serveur MCP</a> ·
+  <a href="#bases-de-données">Bases de données</a> ·
   <a href="#utiliser-lagent-sur-un-autre-projet-dbt">Autre projet dbt</a>
 </p>
 
@@ -253,6 +255,27 @@ Pour Claude : copier `.env.example` en `.env`, mettre `DQ_LLM_PROVIDER=anthropic
 
 ---
 
+## Bases de données
+
+| Base | État | Branchement |
+|---|---|---|
+| DuckDB | pris en charge, testé | par défaut : un fichier local (`DQ_DUCKDB_PATH`) |
+| PostgreSQL | pris en charge, testé (pytest en local et dans la CI, évaluation ci-dessus) | `DQ_WAREHOUSE=postgresql://utilisateur:mot_de_passe@hôte:5432/base` |
+| MySQL | branchement écrit, **non testé** | `DQ_WAREHOUSE=mysql://utilisateur:mot_de_passe@hôte:3306/base` |
+| SQLite, Snowflake, BigQuery, Redshift… | non pris en charge | voir ci-dessous |
+
+**Comment ça marche.** dbt tourne avec l'adaptateur de la base (dbt-duckdb, dbt-postgres…) : ce sont toujours les tests dbt qui détectent. L'agent, lui, lit et corrige les données à travers DuckDB, qui attache la base par son extension (`postgres`, `mysql`). Son SQL, ses garde-fous, la simulation dans une transaction annulée et la quarantaine sont donc les mêmes partout. Trois différences sont gérées : PostgreSQL refuse de remplacer une table dont dépendent des vues (l'agent la supprime en cascade, le `dbt build` suivant recrée les vues) ; les tests générés par l'agent sont traduits dans le dialecte SQL de la base avec sqlglot ; le profileur travaille sur une copie locale lue une seule fois.
+
+```bash
+uv sync --extra postgres          # adaptateur dbt-postgres
+createdb dq_weather               # base PostgreSQL vide
+make weather-postgres             # relevés météo dans PostgreSQL, référence, dbt build
+```
+
+**Pas encore pris en charge.** SQLite n'a pas de schémas (`raw.readings` n'y existe pas) et demanderait de nommer les tables autrement. Snowflake, BigQuery ou Redshift demanderaient un autre branchement (traduire le SQL de l'agent, ou une extension DuckDB dédiée) : ce n'est ni fait ni testé.
+
+---
+
 ## Utiliser l'agent sur un autre projet dbt
 
 L'agent ne connaît pas le domaine des données : il lit le projet dbt qu'on lui désigne. Les tables qu'il a le droit de corriger sont les **sources déclarées dans dbt**, l'ordre de traitement vient du **graphe dbt**, et la description du domaine donnée au LLM est une variable dbt. Le dossier [`examples/weather`](examples/weather) en est la preuve : un second projet dbt, des relevés horaires de 32 stations météo, que le même agent surveille et répare sans une ligne de code en plus. Seules des variables d'environnement changent :
@@ -267,9 +290,9 @@ uv run dq inject missing_fahrenheit --seed 1   # casse les données
 uv run dq run --provider hybrid                # l'agent répare, tu valides
 ```
 
-Pour un autre projet dbt sur DuckDB, il faut :
+Pour un autre projet dbt, il faut :
 
-1. `DQ_DBT_DIR` vers le projet et `DQ_DUCKDB_PATH` vers la base, avec un `profiles.yml` dont le chemin vaut `{{ env_var('DQ_DUCKDB_PATH') }}` ;
+1. `DQ_DBT_DIR` vers le projet, puis la base : pour DuckDB, `DQ_DUCKDB_PATH` (lu dans `profiles.yml` par `env_var('DQ_DUCKDB_PATH')`) ; pour PostgreSQL, `DQ_WAREHOUSE` et la cible dbt correspondante dans `DQ_DBT_PROFILE_TARGET` (le profil peut lire les paramètres de connexion dans `DQ_WAREHOUSE_HOST`, `_PORT`, `_USER`, `_PASSWORD` et `_DBNAME`, que l'agent déduit de `DQ_WAREHOUSE`) ; `DQ_DBT_PROFILES_DIR` si `profiles.yml` est ailleurs ;
 2. **des tests dbt**, c'est-à-dire les détecteurs : l'agent corrige ce que les tests voient, et le profileur repère ce qu'ils ne voient pas ;
 3. **les colonnes des sources décrites** dans le YAML dbt : c'est le contrat de schéma, et le LLM y lit par exemple que « `obs_date` vaut toujours `CAST(observed_at AS DATE)` » ;
 4. **le lignage des colonnes** des modèles staging (`meta: {source_table, source_columns}`), sinon l'agent remonte à la source unique en amont ;
@@ -277,7 +300,7 @@ Pour un autre projet dbt sur DuckDB, il faut :
 6. pour chaque test singulier, sa catégorie : `{{ config(meta={'dq_category': 'date_inconsistency'}) }}` ; les tests génériques (`not_null`, `unique`, `relationships`, `accepted_values`, `in_range`) sont reconnus d'office ;
 7. la variable `dq_agent.domain` dans `dbt_project.yml`, puis `dq baseline` une fois les données jugées propres.
 
-Les lignes en échec sont conservées d'office (`dbt build --store-failures`). Pour mesurer l'agent sur un nouveau projet, un fichier de scénarios (`DQ_SCENARIOS`, sur le modèle de [`examples/weather/scenarios.py`](examples/weather/scenarios.py)) décrit les anomalies à injecter et l'état attendu après une bonne correction. Seul DuckDB est pris en charge pour l'instant.
+Les lignes en échec sont conservées d'office (`dbt build --store-failures`). Pour mesurer l'agent sur un nouveau projet, un fichier de scénarios (`DQ_SCENARIOS`, sur le modèle de [`examples/weather/scenarios.py`](examples/weather/scenarios.py)) décrit les anomalies à injecter et l'état attendu après une bonne correction.
 
 ---
 
@@ -301,6 +324,7 @@ src/dq_agent/
   review.py             relecteurs : terminal, simulé (évaluation)
   evaluate.py           évaluation chiffrée
   mcp_server.py         serveur MCP en lecture seule
+  warehouse.py          connexion : fichier DuckDB, ou PostgreSQL et MySQL attachés par DuckDB
 tests/                  tests pytest (données synthétiques, vols et météo)
 reports/                résultats d'évaluation (JSONL) et RESULTS.md ; reports/weather/ : jeu météo ; reports/v1/ : première version
 ```

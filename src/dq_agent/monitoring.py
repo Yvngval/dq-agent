@@ -18,7 +18,7 @@ from sqlglot import exp
 
 from dq_agent import dbt_runner, reference
 from dq_agent.config import settings
-from dq_agent.warehouse import connect, row_count
+from dq_agent.warehouse import connect, row_count, warehouse
 
 MAX_FLAGGED_FRACTION = 0.5
 
@@ -79,6 +79,9 @@ def validate_test(condition: str, table: str) -> TestValidation:
 
 def test_sql(table: str, condition: str, description: str, finding: dict, reviewer: str) -> str:
     condition = condition.strip().removeprefix("WHERE ").strip()
+    dialect = warehouse().dialect
+    if dialect != "duckdb":  # la condition est écrite en SQL DuckDB ; dbt l'exécute dans la base surveillée
+        condition = sqlglot.parse_one(condition, read="duckdb").sql(dialect=dialect)
     return (
         f"-- Test généré par dq-agent à partir d'un constat du profileur ({finding['kind']}, "
         f"{finding['table']}.{finding.get('column') or '*'}).\n"

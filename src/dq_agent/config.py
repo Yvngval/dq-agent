@@ -18,8 +18,16 @@ load_dotenv(ROOT / ".env")
 class Settings:
     root: Path = ROOT
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_DATA_DIR", ROOT / "data")))
-    # Projet dbt surveillé : celui du dépôt par défaut, ou n'importe quel projet dbt-duckdb.
+    # Projet dbt surveillé : celui du dépôt par défaut, ou n'importe quel projet dbt.
     dbt_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_DBT_DIR", ROOT / "dbt")).resolve())
+    dbt_profiles_dir: Path | None = field(
+        default_factory=lambda: (
+            Path(os.environ["DQ_DBT_PROFILES_DIR"]).resolve() if os.getenv("DQ_DBT_PROFILES_DIR") else None
+        )
+    )
+    dbt_profile_target: str | None = field(default_factory=lambda: os.getenv("DQ_DBT_PROFILE_TARGET"))
+    # Base surveillée : un fichier DuckDB par défaut, ou postgresql://... / mysql://... (DuckDB sert de passerelle).
+    warehouse_url: str | None = field(default_factory=lambda: os.getenv("DQ_WAREHOUSE"))
     logs_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_LOGS_DIR", ROOT / "logs")))
 
     llm_provider: str = field(default_factory=lambda: os.getenv("DQ_LLM_PROVIDER", "ollama"))

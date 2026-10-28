@@ -27,6 +27,11 @@ dependencies = [
 [project.scripts]
 dq = "dq_agent.cli:app"
 
+[project.optional-dependencies]
+postgres = [
+    "dbt-postgres>=1.11.0",
+]
+
 [build-system]
 requires = ["uv_build>=0.10.10,<0.11.0"]
 build-backend = "uv_build"

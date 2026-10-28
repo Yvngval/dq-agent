@@ -26,7 +26,7 @@ from sklearn.ensemble import IsolationForest
 
 from dq_agent import dbt_runner
 from dq_agent.config import settings
-from dq_agent.warehouse import connect, table_columns
+from dq_agent.warehouse import connect, table_columns, warehouse
 
 NUMERIC = ("DOUBLE", "FLOAT", "REAL", "DECIMAL", "INTEGER", "BIGINT", "SMALLINT", "HUGEINT")
 TEMPORAL = ("DATE", "TIMESTAMP")
@@ -119,16 +119,30 @@ def _feature_matrix(con, table: str, columns: list[str], medians: dict[str, floa
 
 
 def _forest_path(table: str):
+    settings().data_dir.mkdir(parents=True, exist_ok=True)
     return settings().data_dir / f"iforest_{table.replace('.', '_')}.joblib"
 
 
-def _fit_forests(con, table: str) -> dict | None:
+def _scan_source(con, table: str) -> str:
+    """Relation à interroger pour les statistiques d'une table.
+
+    Sur une base attachée (PostgreSQL...), une copie locale lue une seule fois : le profil enchaîne
+    des dizaines de requêtes, qui sinon reliraient chacune la table distante.
+    """
+    if warehouse().kind == "duckdb":
+        return table
+    local = "dq_profile_" + table.replace(".", "_")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE {local} AS SELECT * FROM {table}")
+    return f"temp.{local}"
+
+
+def _fit_forests(con, table: str, src: str) -> dict | None:
     """Un Isolation Forest par paire de colonnes numériques, seuil calé sur la référence."""
     numeric = _numeric_columns(con, table)[:IFOREST_MAX_COLUMNS]
     if len(numeric) < 2:
         return None
-    medians = {c: con.execute(f'SELECT median("{c}") FROM {table}').fetchone()[0] or 0.0 for c in numeric}
-    _, X = _feature_matrix(con, table, numeric, medians)
+    medians = {c: con.execute(f'SELECT median("{c}") FROM {src}').fetchone()[0] or 0.0 for c in numeric}
+    _, X = _feature_matrix(con, src, numeric, medians)
     if len(X) < 200:
         return None
     forests = {}
@@ -147,11 +161,12 @@ def build_baseline() -> dict:
     with connect() as con:
         for table in dbt_runner.writable_tables():
             columns = table_columns(con, table)
+            src = _scan_source(con, table)
             profile[table] = {
-                "rows": con.execute(f"SELECT count(*) FROM {table}").fetchone()[0],
-                "columns": {c: _column_stats(con, table, c, _kind(t)) for c, t in columns if c != ROW_ID},
+                "rows": con.execute(f"SELECT count(*) FROM {src}").fetchone()[0],
+                "columns": {c: _column_stats(con, src, c, _kind(t)) for c, t in columns if c != ROW_ID},
             }
-            if ROW_ID in dict(columns) and (forests := _fit_forests(con, table)):
+            if ROW_ID in dict(columns) and (forests := _fit_forests(con, table, src)):
                 profile[table]["iforest"] = forests
         con.execute("CREATE SCHEMA IF NOT EXISTS audit")
         con.execute("CREATE OR REPLACE TABLE audit.profile_baseline AS SELECT ? AS profile", [json.dumps(profile)])
@@ -192,7 +207,8 @@ def findings() -> list[Finding]:
 def _table_findings(con, table: str, base: dict) -> list[Finding]:
     out: list[Finding] = []
     actual = dict(table_columns(con, table))
-    n = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+    src = _scan_source(con, table)
+    n = con.execute(f"SELECT count(*) FROM {src}").fetchone()[0]
     if base["rows"] and abs(n - base["rows"]) / base["rows"] > VOLUME_CHANGE:
         out.append(
             Finding(
@@ -209,7 +225,7 @@ def _table_findings(con, table: str, base: dict) -> list[Finding]:
         if column not in actual:
             continue  # colonne disparue : c'est une dérive de schéma, déjà signalée par dbt
         q = f'"{column}"'
-        nulls = con.execute(f"SELECT count(*) - count({q}) FROM {table}").fetchone()[0]
+        nulls = con.execute(f"SELECT count(*) - count({q}) FROM {src}").fetchone()[0]
         rate = nulls / n if n else 0.0
         if rate - b["null_rate"] > NULL_JUMP and rate > NULL_RATIO * b["null_rate"]:
             out.append(
@@ -228,6 +244,7 @@ def _table_findings(con, table: str, base: dict) -> list[Finding]:
             cast = "" if b["kind"] == "numeric" else f"::{actual[column]}"
             out += _row_finding(
                 con,
+                src,
                 table,
                 column,
                 "out_of_range",
@@ -241,6 +258,7 @@ def _table_findings(con, table: str, base: dict) -> list[Finding]:
                 cond = f"{q} <> upper({q})" + (f" AND {q} NOT IN ({', '.join(map(_quote, known))})" if known else "")
                 out += _row_finding(
                     con,
+                    src,
                     table,
                     column,
                     "case_drift",
@@ -251,6 +269,7 @@ def _table_findings(con, table: str, base: dict) -> list[Finding]:
             if b.get("min_len") is not None:
                 out += _row_finding(
                     con,
+                    src,
                     table,
                     column,
                     "length_drift",
@@ -263,6 +282,7 @@ def _table_findings(con, table: str, base: dict) -> list[Finding]:
                 known = ", ".join(_quote(v) for v in b["values"])
                 out += _row_finding(
                     con,
+                    src,
                     table,
                     column,
                     "new_values",
@@ -271,24 +291,22 @@ def _table_findings(con, table: str, base: dict) -> list[Finding]:
                     {"values": b["values"]},
                 )
     if "iforest" in base:
-        out += _forest_finding(con, table)
+        out += _forest_finding(con, table, src)
     return out
 
 
-def _row_finding(con, table, column, kind, cond, message, baseline) -> list[Finding]:
-    rows = con.execute(f"SELECT count(*) FROM {table} WHERE {cond}").fetchone()[0]
+def _row_finding(con, src, table, column, kind, cond, message, baseline) -> list[Finding]:
+    rows = con.execute(f"SELECT count(*) FROM {src} WHERE {cond}").fetchone()[0]
     if not rows:
         return []
     sample = [
         r[0]
-        for r in con.execute(
-            f'SELECT DISTINCT CAST("{column}" AS VARCHAR) FROM {table} WHERE {cond} LIMIT 5'
-        ).fetchall()
+        for r in con.execute(f'SELECT DISTINCT CAST("{column}" AS VARCHAR) FROM {src} WHERE {cond} LIMIT 5').fetchall()
     ]
     return [Finding(kind, table, column, rows, message, baseline, {"rows": rows}, sample, cond)]
 
 
-def _forest_finding(con, table: str) -> list[Finding]:
+def _forest_finding(con, table: str, src: str) -> list[Finding]:
     """Paire de colonnes dont les combinaisons isolées dépassent nettement ce qu'on attend par hasard."""
     path = _forest_path(table)
     if not path.exists():
@@ -296,7 +314,7 @@ def _forest_finding(con, table: str) -> list[Finding]:
     saved = joblib.load(path)
     if any(c not in dict(table_columns(con, table)) for c in saved["columns"]):
         return []
-    ids, X = _feature_matrix(con, table, saved["columns"], saved["medians"])
+    ids, X = _feature_matrix(con, src, saved["columns"], saved["medians"])
     if not len(ids):
         return []
     expected = IFOREST_QUANTILE * len(ids)
@@ -314,7 +332,7 @@ def _forest_finding(con, table: str) -> list[Finding]:
     (a, b), ordered, excess = best
     top = ", ".join(str(int(i)) for i in ordered[:5])
     sample = [
-        list(r) for r in con.execute(f'SELECT {ROW_ID}, "{a}", "{b}" FROM {table} WHERE {ROW_ID} IN ({top})').fetchall()
+        list(r) for r in con.execute(f'SELECT {ROW_ID}, "{a}", "{b}" FROM {src} WHERE {ROW_ID} IN ({top})').fetchall()
     ]
     return [
         Finding(

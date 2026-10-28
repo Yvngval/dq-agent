@@ -8,3 +8,14 @@ dq_weather:
       threads: 4
       settings:
         TimeZone: UTC
+    # Même projet sur PostgreSQL : DQ_WAREHOUSE=postgresql://... et DQ_DBT_PROFILE_TARGET=postgres.
+    # Les paramètres de connexion sont déduits de DQ_WAREHOUSE par l'agent.
+    postgres:
+      type: postgres
+      host: "{{ env_var('DQ_WAREHOUSE_HOST', 'localhost') }}"
+      port: "{{ env_var('DQ_WAREHOUSE_PORT', '5432') | as_number }}"
+      user: "{{ env_var('DQ_WAREHOUSE_USER', '') }}"
+      password: "{{ env_var('DQ_WAREHOUSE_PASSWORD', '') }}"
+      dbname: "{{ env_var('DQ_WAREHOUSE_DBNAME', 'dq_weather') }}"
+      schema: public
+      threads: 4

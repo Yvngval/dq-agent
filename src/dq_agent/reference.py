@@ -7,7 +7,7 @@ Générique : les tables concernées sont les sources déclarées dans le projet
 from __future__ import annotations
 
 from dq_agent import dbt_runner
-from dq_agent.warehouse import connect
+from dq_agent.warehouse import connect, replace_table
 
 SCHEMA = "snapshot"
 
@@ -43,5 +43,5 @@ def restore() -> list[str]:
         if missing:
             raise RuntimeError(f"Pas de référence pour {missing} : lance d'abord `dq baseline`.")
         for table in tables:
-            con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM {snapshot_table(table)}")
+            replace_table(con, table, f"SELECT * FROM {snapshot_table(table)}")
     return list(tables)

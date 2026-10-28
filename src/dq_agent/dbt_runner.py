@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from dq_agent.config import quality_vars, settings
+from dq_agent.warehouse import warehouse
 
 # Ordre de traitement des tests d'un même modèle : les causes en amont d'abord.
 TEST_PRIORITY = {
@@ -76,19 +77,21 @@ def _dbt_executable() -> str:
 
 def run_dbt(args: list[str]) -> subprocess.CompletedProcess:
     s = settings()
-    env = {**os.environ, "DQ_DUCKDB_PATH": str(s.duckdb_path.resolve())}
+    env = {**os.environ, "DQ_DUCKDB_PATH": str(s.duckdb_path.resolve()), **warehouse().dbt_env()}
     cmd = [
         _dbt_executable(),
         *args,
         "--project-dir",
         str(s.dbt_dir),
         "--profiles-dir",
-        str(s.dbt_dir),
+        str(s.dbt_profiles_dir or s.dbt_dir),
         "--target-path",
         str(s.dbt_target),
         "--log-path",
         str(s.dbt_target / "logs"),
     ]
+    if s.dbt_profile_target:
+        cmd += ["--target", s.dbt_profile_target]
     return subprocess.run(cmd, cwd=s.dbt_dir, env=env, capture_output=True, text=True)
 
 

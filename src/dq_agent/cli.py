@@ -137,6 +137,7 @@ def run(
 
     reasoner = make_reasoner(provider or settings().llm_provider)
     console.print(f"Raisonneur : [bold]{reasoner.name}[/]")
+    settings().data_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(settings().checkpoints_path, check_same_thread=False)
     try:
         result = run_agent(
