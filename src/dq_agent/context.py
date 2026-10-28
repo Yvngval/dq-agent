@@ -10,7 +10,7 @@ import decimal
 
 from dq_agent import dbt_runner
 from dq_agent.dbt_runner import Failure
-from dq_agent.warehouse import RAW_TABLES, connect, fetch_dicts, table_columns
+from dq_agent.warehouse import connect, fetch_dicts, table_columns
 
 
 def _jsonable(value):
@@ -28,7 +28,7 @@ def _clean(rows: list[dict]) -> list[dict]:
 
 
 def raw_schema(con) -> dict[str, list[list[str]]]:
-    return {t: [[c, ty] for c, ty in table_columns(con, t)] for t in RAW_TABLES}
+    return {t: [[c, ty] for c, ty in table_columns(con, t)] for t in dbt_runner.writable_tables()}
 
 
 def failing_rows(con, failure: Failure, limit: int = 5) -> list[dict]:
@@ -40,9 +40,9 @@ def failing_rows(con, failure: Failure, limit: int = 5) -> list[dict]:
         return []
 
 
-def raw_rows_for(con, sample: list[dict], table: str = "raw.flights") -> list[dict]:
+def raw_rows_for(con, sample: list[dict], table: str) -> list[dict]:
     ids = [r["_row_id"] for r in sample if r.get("_row_id") is not None]
-    if not ids or table != "raw.flights":
+    if not ids or "_row_id" not in dict(table_columns(con, table)):
         return []
     return _clean(
         fetch_dicts(con, f"SELECT * FROM {table} WHERE _row_id IN ({', '.join(map(str, ids))}) ORDER BY _row_id")
@@ -68,6 +68,14 @@ def column_profile(con, table: str, column: str) -> dict:
     return {"column": column, "exists": True, "type": cols[column], **_clean([stats])[0], "examples": examples}
 
 
+def _resolve_table(primary: Failure, manifest: dict, schema: dict) -> str:
+    """Table raw à corriger : lignage de la colonne, sinon unique source en amont, sinon la première."""
+    if primary.source_table:
+        return primary.source_table
+    upstream = dbt_runner.upstream_sources(primary.unique_id, manifest)
+    return upstream[0] if len(upstream) == 1 else next(iter(schema))
+
+
 def gather(primary: Failure, failures: list[Failure]) -> dict:
     """Assemble le contexte transmis au raisonneur pour l'incident `primary`."""
     manifest = dbt_runner.load_manifest()
@@ -75,13 +83,14 @@ def gather(primary: Failure, failures: list[Failure]) -> dict:
     with connect(read_only=True) as con:
         sample = failing_rows(con, primary)
         schema = raw_schema(con)
-        table = primary.source_table or "raw.flights"
+        table = _resolve_table(primary, manifest, schema)
         profiles = [column_profile(con, table, c) for c in primary.source_columns]
         if primary.resource_type == "model":
-            expected = {c["name"] for c in contract.get("raw.flights", [])}
-            actual = {c for c, _ in schema["raw.flights"]}
-            profiles = [column_profile(con, "raw.flights", c) for c in sorted(actual - expected)]
+            expected = {c["name"] for c in contract.get(table, [])}
+            actual = {c for c, _ in schema[table]}
+            profiles = [column_profile(con, table, c) for c in sorted(actual - expected)]
         context = {
+            "table": table,
             "primary_failure": {
                 "node": primary.unique_id,
                 "kind": "model_error" if primary.resource_type == "model" else "failing_test",
@@ -136,7 +145,7 @@ def llm_view(context: dict) -> dict:
     explicitement les seules colonnes utilisables dans le SQL de correction.
     """
     pf, lineage = context["primary_failure"], context["lineage"]
-    table = lineage["source_table"] or "raw.flights"
+    table = context["table"]
     contract = {c["name"]: c for c in context["source_contract"].get(table, [])}
     actual = context["raw_schema_actual"].get(table, [])
     actual_names = {name for name, _ in actual}

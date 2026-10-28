@@ -15,7 +15,8 @@ import sqlglot
 from sqlglot import exp
 
 from dq_agent.config import settings
-from dq_agent.warehouse import RAW_TABLES, connect, fetch_dicts, row_count
+from dq_agent.dbt_runner import writable_tables
+from dq_agent.warehouse import connect, fetch_dicts, row_count
 
 ALLOWED = (exp.Update, exp.Delete, exp.Alter)
 
@@ -63,12 +64,13 @@ def parse_fix(sql: str) -> ParsedFix:
             f"Instruction {type(stmt).__name__.upper()} interdite : seuls UPDATE, DELETE et "
             "ALTER TABLE ... RENAME COLUMN sont autorisés."
         )
-    target = stmt.this if isinstance(stmt, (exp.Update, exp.Alter)) else stmt.this
+    target = stmt.this
     if not isinstance(target, exp.Table):
         raise FixRejected("Table cible introuvable.")
     table = f"{target.db}.{target.name}" if target.db else target.name
-    if table not in RAW_TABLES:
-        raise FixRejected(f"Table cible {table!r} interdite : seules {', '.join(RAW_TABLES)} sont modifiables.")
+    allowed = writable_tables()
+    if table not in allowed:
+        raise FixRejected(f"Table cible {table!r} interdite : seules {', '.join(allowed)} sont modifiables.")
     if isinstance(stmt, exp.Alter):
         actions = stmt.args.get("actions") or []
         if len(actions) != 1 or type(actions[0]).__name__ != "RenameColumn":

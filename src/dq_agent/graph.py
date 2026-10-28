@@ -1,12 +1,22 @@
 """Graphe LangGraph de l'agent : détecter, diagnostiquer, proposer, faire valider, appliquer, revérifier.
 
-    run_checks ──► select_incident ──► gather_context ──► diagnose ──► propose_fix ──► validate_fix
-        ▲                                                                  ▲   │            │
-        │                                                                  └───┴── refus ───┤
-        └──────────── apply_fix ◄── approuvé ── human_review (interrupt) ◄──── valide ──────┘
-                                                     │ rejeté / escaladé
-                                                     ▼
-                                                  escalate ──► incident suivant ou fin
+Boucle de correction (déclenchée par un test dbt en échec) :
+
+    run_checks -> select_incident -> gather_context -> diagnose -> propose_fix -> validate_fix
+        ^                                                              ^      ^         |
+        |                                    refus des garde-fous -----+------+---------+
+        |                                    rejet humain (avec commentaire) |
+        +---- apply_fix <-- approuvé -- human_review (interrupt) <-- valide -+
+                                             | escalade ou 3 échecs
+                                             v
+                                          escalate -> incident suivant ou fin
+
+Boucle de surveillance (quand tous les tests passent) :
+
+    run_checks (vert) -> profile -> propose_test -> validate_test -> review_test (interrupt)
+                            ^                                             | approuvé
+                            +-- dismiss_finding (alerte humaine)          v
+                                                                    write_test -> run_checks
 
 Chaque étape écrit une ligne dans le journal des décisions.
 """
@@ -23,12 +33,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from dq_agent import context as ctx
-from dq_agent import dbt_runner, guardrails
+from dq_agent import dbt_runner, guardrails, monitoring, profiler
 from dq_agent.audit import DecisionLog
 from dq_agent.config import settings
 from dq_agent.dbt_runner import Failure
 from dq_agent.reasoners import Reasoner
 from dq_agent.schemas import Diagnosis
+from dq_agent.warehouse import connect, table_columns
 
 
 class AgentState(TypedDict, total=False):
@@ -56,6 +67,15 @@ class AgentState(TypedDict, total=False):
     review_seconds: float
     error: str | None
     status: str
+    # Surveillance sans test écrit (profileur -> nouveau test dbt)
+    finding: dict | None
+    test_proposal: dict | None
+    test_validation: dict | None
+    test_attempts: int
+    test_feedback: list[dict]
+    dismissed: list[str]
+    tests_written: list[str]
+    monitoring: list[dict]
 
 
 def _summary(f: dict) -> dict:
@@ -121,7 +141,7 @@ def build_graph(reasoner: Reasoner, log: DecisionLog, checkpointer=None):
             "human_edits": 0,
             "feedback": [],
             "error": None,
-            "incident_started": time.perf_counter(),
+            "incident_started": time.time(),
             "llm_seconds": 0.0,
             "review_seconds": 0.0,
             "diagnosis": None,
@@ -258,14 +278,167 @@ def build_graph(reasoner: Reasoner, log: DecisionLog, checkpointer=None):
             "incident": None,
         }
 
+    # --- surveillance : constats du profileur transformés en tests dbt ---------------------------
+    def profile(state: AgentState) -> dict:
+        start = time.perf_counter()
+        done = set(state.get("dismissed", [])) | set(state.get("tests_written", []))
+        found = [f for f in profiler.findings() if f.key not in done]
+        log.log(
+            "profile",
+            None,
+            seconds=round(time.perf_counter() - start, 2),
+            findings=[{"key": f.key, "rows": f.rows, "message": f.message} for f in found],
+        )
+        if not found:
+            return {"finding": None}
+        return {
+            "finding": found[0].to_dict(),
+            "test_attempts": 0,
+            "test_feedback": [],
+            "test_proposal": None,
+            "test_validation": None,
+            "error": None,
+        }
+
+    def propose_test(state: AgentState) -> dict:
+        finding = state["finding"]
+        start = time.perf_counter()
+        try:
+            proposal = reasoner.propose_test(
+                _finding_view(finding), _described_columns(finding["table"]), state.get("test_feedback", [])
+            ).model_dump()
+            error = None
+        except Exception as e:
+            proposal, error = None, f"proposition de test impossible : {e}"
+        attempts = state.get("test_attempts", 0) + 1
+        log.log(
+            "propose_test",
+            finding["key"],
+            attempt=attempts,
+            proposal=proposal,
+            error=error,
+            llm_seconds=round(time.perf_counter() - start, 2),
+        )
+        return {"test_proposal": proposal, "test_attempts": attempts, "error": error}
+
+    def validate_test(state: AgentState) -> dict:
+        proposal, finding = state["test_proposal"], state["finding"]
+        validation = monitoring.validate_test(proposal["condition"], finding["table"]).to_dict()
+        if proposal["condition"].strip() in [f["condition"].strip() for f in state.get("test_feedback", [])]:
+            validation["ok"] = False
+            validation["errors"].append("Same condition as a previous rejected attempt: change it.")
+        log.log(
+            "validate_test",
+            finding["key"],
+            ok=validation["ok"],
+            errors=validation["errors"],
+            current_rows=validation["current_rows"],
+            history_rows=validation["history_rows"],
+        )
+        update: dict[str, Any] = {"test_validation": validation}
+        if not validation["ok"]:
+            update["test_feedback"] = state.get("test_feedback", []) + [
+                {
+                    "condition": proposal["condition"],
+                    "outcome": "rejected_by_guardrails",
+                    "detail": "; ".join(validation["errors"]),
+                }
+            ]
+        return update
+
+    def review_test(state: AgentState) -> dict:
+        decision = interrupt(
+            {
+                "kind": "test",
+                "finding": state["finding"],
+                "proposal": state["test_proposal"],
+                "validation": state["test_validation"],
+                "attempt": state["test_attempts"],
+            }
+        )
+        update: dict[str, Any] = {"decision": decision}
+        if decision["decision"] == "edit":
+            update["test_proposal"] = {
+                **state["test_proposal"],
+                "condition": decision["condition"],
+                "edited_by_human": True,
+            }
+        if decision["decision"] == "reject":
+            update["test_feedback"] = state.get("test_feedback", []) + [
+                {
+                    "condition": state["test_proposal"]["condition"],
+                    "outcome": "rejected_by_reviewer",
+                    "detail": decision.get("comment", ""),
+                }
+            ]
+        log.log(
+            "review_test",
+            state["finding"]["key"],
+            decision=decision["decision"],
+            comment=decision.get("comment"),
+            reviewer=decision.get("reviewer"),
+        )
+        return update
+
+    def write_test(state: AgentState) -> dict:
+        finding, proposal = state["finding"], state["test_proposal"]
+        sql = monitoring.test_sql(
+            finding["table"],
+            proposal["condition"],
+            proposal["description"],
+            finding,
+            (state.get("decision") or {}).get("reviewer", "?"),
+        )
+        path = monitoring.write_test(proposal["name"], sql)
+        log.log("write_test", finding["key"], test=path.stem, condition=proposal["condition"])
+        return {
+            "tests_written": state.get("tests_written", []) + [finding["key"]],
+            "monitoring": state.get("monitoring", [])
+            + [
+                {
+                    "finding": finding["key"],
+                    "outcome": "test_written",
+                    "test": path.stem,
+                    "condition": proposal["condition"],
+                    "attempts": state["test_attempts"],
+                }
+            ],
+        }
+
+    def dismiss_finding(state: AgentState) -> dict:
+        finding = state["finding"]
+        reason = (
+            state.get("error")
+            or (state.get("decision") or {}).get("comment")
+            or (state.get("test_proposal") or {}).get("reasoning")
+            or "nombre maximal de tentatives"
+        )
+        log.log("escalate_finding", finding["key"], reason=reason, attempts=state.get("test_attempts", 0))
+        return {
+            "dismissed": state.get("dismissed", []) + [finding["key"]],
+            "monitoring": state.get("monitoring", [])
+            + [
+                {
+                    "finding": finding["key"],
+                    "outcome": "escalated",
+                    "reason": reason,
+                    "attempts": state.get("test_attempts", 0),
+                }
+            ],
+            "finding": None,
+            "error": None,
+        }
+
     def finish(state: AgentState) -> dict:
         failures = state.get("failures", [])
-        status = "green" if not failures else "needs_human"
+        alerts = state.get("dismissed", [])
+        status = "green" if not failures and not alerts else "needs_human"
         log.log(
             "finish",
             None,
             status=status,
             remaining_failures=[f["unique_id"] for f in failures],
+            alerts=alerts,
             incidents=len(state.get("handled", [])),
             dbt_seconds=round(state.get("dbt_seconds", 0.0), 2),
         )
@@ -273,8 +446,10 @@ def build_graph(reasoner: Reasoner, log: DecisionLog, checkpointer=None):
 
     # --- routage -------------------------------------------------------------------------------
     def after_checks(state: AgentState) -> str:
-        if not state.get("failures") or state.get("iteration", 0) > s.max_iterations:
+        if state.get("iteration", 0) > s.max_iterations:
             return "finish"
+        if not state.get("failures"):
+            return "profile" if s.profiling else "finish"
         if not [f for f in state["failures"] if f["unique_id"] not in state.get("escalated", [])]:
             return "finish"
         return "select_incident"
@@ -307,6 +482,28 @@ def build_graph(reasoner: Reasoner, log: DecisionLog, checkpointer=None):
             return "propose_fix"
         return "escalate"
 
+    def after_profile(state: AgentState) -> str:
+        return "propose_test" if state.get("finding") else "finish"
+
+    def after_test_proposal(state: AgentState) -> str:
+        proposal = state.get("test_proposal")
+        if state.get("error") or not proposal or proposal["action"] == "escalate":
+            return "dismiss_finding"
+        return "validate_test"
+
+    def after_test_validation(state: AgentState) -> str:
+        if state["test_validation"]["ok"]:
+            return "review_test"
+        return "propose_test" if state["test_attempts"] < s.max_attempts else "dismiss_finding"
+
+    def after_test_review(state: AgentState) -> str:
+        kind = state["decision"]["decision"]
+        if kind in ("approve", "edit"):
+            return "write_test"
+        if kind == "reject" and state["test_attempts"] < s.max_attempts:
+            return "propose_test"
+        return "dismiss_finding"
+
     def after_apply(state: AgentState) -> str:
         if state.get("error"):
             return "propose_fix" if state["attempts"] < s.max_attempts else "escalate"
@@ -323,11 +520,17 @@ def build_graph(reasoner: Reasoner, log: DecisionLog, checkpointer=None):
         ("human_review", human_review),
         ("apply_fix", apply_fix),
         ("escalate", escalate),
+        ("profile", profile),
+        ("propose_test", propose_test),
+        ("validate_test", validate_test),
+        ("review_test", review_test),
+        ("write_test", write_test),
+        ("dismiss_finding", dismiss_finding),
         ("finish", finish),
     ]:
         graph.add_node(name, fn)
     graph.add_edge(START, "run_checks")
-    graph.add_conditional_edges("run_checks", after_checks, ["select_incident", "finish"])
+    graph.add_conditional_edges("run_checks", after_checks, ["select_incident", "profile", "finish"])
     graph.add_conditional_edges("select_incident", after_select, ["gather_context", "escalate"])
     graph.add_conditional_edges("gather_context", after_gather, ["diagnose", "propose_fix"])
     graph.add_conditional_edges("diagnose", after_reasoning, {"next": "propose_fix", "escalate": "escalate"})
@@ -335,9 +538,31 @@ def build_graph(reasoner: Reasoner, log: DecisionLog, checkpointer=None):
     graph.add_conditional_edges("validate_fix", after_validation, ["human_review", "propose_fix", "escalate"])
     graph.add_conditional_edges("human_review", after_review, ["apply_fix", "propose_fix", "escalate"])
     graph.add_conditional_edges("apply_fix", after_apply, ["run_checks", "propose_fix", "escalate"])
-    graph.add_conditional_edges("escalate", after_checks, ["select_incident", "finish"])
+    graph.add_conditional_edges("escalate", after_checks, ["select_incident", "profile", "finish"])
+    graph.add_conditional_edges("profile", after_profile, ["propose_test", "finish"])
+    graph.add_conditional_edges("propose_test", after_test_proposal, ["validate_test", "dismiss_finding"])
+    graph.add_conditional_edges(
+        "validate_test", after_test_validation, ["review_test", "propose_test", "dismiss_finding"]
+    )
+    graph.add_conditional_edges("review_test", after_test_review, ["write_test", "propose_test", "dismiss_finding"])
+    graph.add_edge("write_test", "run_checks")
+    graph.add_edge("dismiss_finding", "profile")
     graph.add_edge("finish", END)
     return graph.compile(checkpointer=checkpointer)
+
+
+def _finding_view(finding: dict) -> dict:
+    """Constat transmis au LLM : la liste d'identifiants d'une alerte Isolation Forest est retirée."""
+    view = {k: v for k, v in finding.items() if k != "key"}
+    if finding["kind"] == "unusual_rows":
+        view["condition"] = None
+    return view
+
+
+def _described_columns(table: str) -> list[list[str]]:
+    contract = {c["name"]: c.get("description", "") for c in dbt_runner.source_contract().get(table, [])}
+    with connect(read_only=True) as con:
+        return [[c, t, contract.get(c, "")] for c, t in table_columns(con, table)]
 
 
 def _agent_checks(validation: dict, sql: str, state: AgentState) -> None:
@@ -381,7 +606,7 @@ def _close(state: AgentState, resolved: bool, reason: str | None = None) -> dict
         "rejections": state.get("rejections", 0),
         "human_edits": state.get("human_edits", 0),
         "final_sql": (state.get("proposal") or {}).get("sql"),
-        "agent_seconds": time.perf_counter() - state["incident_started"] - state.get("review_seconds", 0.0),
+        "agent_seconds": time.time() - state["incident_started"] - state.get("review_seconds", 0.0),
         "llm_seconds": state.get("llm_seconds", 0.0),
     }
 

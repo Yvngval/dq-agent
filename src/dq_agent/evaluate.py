@@ -21,7 +21,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from dq_agent import anomalies
+from dq_agent import anomalies, monitoring
 from dq_agent.config import settings
 from dq_agent.graph import run_agent
 from dq_agent.reasoners import Reasoner
@@ -38,6 +38,8 @@ def _decisions(run_id: str) -> list[dict]:
 
 
 def run_scenario(reasoner: Reasoner, scenario: str, seed: int) -> dict:
+    monitoring.clear_generated_tests()
+    spec = anomalies.ALL_SCENARIOS[scenario]
     injection = anomalies.inject(scenario, seed)
     run_id = f"eval-{reasoner.name.replace(':', '_')}-{scenario}-{seed}-{int(time.time())}"
     start = time.perf_counter()
@@ -54,7 +56,31 @@ def run_scenario(reasoner: Reasoner, scenario: str, seed: int) -> dict:
     first = diagnoses[0] if diagnoses else {}
     accepted = sum(r["decision"] == "approve" for r in reviews)
     resolved = state.get("status") == "green" and data["match"]
+    found = [f["key"] for e in events if e["step"] == "profile" for f in e["findings"]]
+    test_reviews = [e for e in events if e["step"] == "review_test"]
+    alerted = any(e["step"] == "escalate_finding" for e in events)
+    expected_kind = spec.expected_finding
+    profile_detected = bool(expected_kind) and any(
+        k.startswith(f"{expected_kind}:")
+        and (
+            not injection.columns or k.split(":")[2] == "*" or set(k.split(":")[2].split("+")) & set(injection.columns)
+        )
+        for k in found
+    )
+    outcome_ok = resolved if spec.repairable else (alerted and state.get("status") == "needs_human")
     return {
+        "suite": "v2" if expected_kind else "v1",
+        "expected_outcome": "repair" if spec.repairable else "alert",
+        "outcome_ok": outcome_ok,
+        "profile_detected": profile_detected,
+        "profile_findings": sorted(set(found)),
+        "tests_proposed": sum(
+            e["step"] == "propose_test" and (e.get("proposal") or {}).get("action") == "add_test" for e in events
+        ),
+        "tests_reviewed": len(test_reviews),
+        "tests_accepted": sum(r["decision"] == "approve" for r in test_reviews),
+        "tests_written": sum(e["step"] == "write_test" for e in events),
+        "alerted": alerted,
         "provider": reasoner.name,
         "scenario": scenario,
         "category": injection.category,
@@ -73,10 +99,12 @@ def run_scenario(reasoner: Reasoner, scenario: str, seed: int) -> dict:
         "escalations": sum(e["step"] == "escalate" for e in events),
         "incidents": len(handled),
         "resolved": resolved,
-        "automated": resolved
+        "automated": outcome_ok
         and len(reviews) == accepted
+        and len(test_reviews) == sum(r["decision"] == "approve" for r in test_reviews)
         and all(h["attempts"] == 1 and h["rejections"] == 0 and h["human_edits"] == 0 for h in handled)
-        and not any(e["step"] == "escalate" for e in events),
+        and not any(e["step"] == "escalate" for e in events)
+        and sum(e["step"] == "propose_test" for e in events) <= len(test_reviews) + (1 if alerted else 0),
         "final_status": state.get("status"),
         "data_match": data["match"],
         "agent_seconds": round(sum(h["agent_seconds"] for h in handled), 2),
@@ -96,7 +124,7 @@ def evaluate(reasoner: Reasoner, scenarios: list[str], seeds: list[int], out: Pa
             with out.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             print(
-                f"[{reasoner.name}] {scenario} seed={seed} resolved={row['resolved']} "
+                f"[{reasoner.name}] {scenario} seed={seed} ok={row['outcome_ok']} resolved={row['resolved']} "
                 f"diag={row['diagnosed_category']} {row['agent_seconds']}s",
                 flush=True,
             )
@@ -110,7 +138,17 @@ def _rate(rows: list[dict], key: str) -> float:
 def summarize(rows: list[dict]) -> dict:
     proposals_reviewed = sum(r["reviewed"] for r in rows)
     seconds = [r["agent_seconds"] for r in rows]
+    wall = [r["wall_seconds"] for r in rows]
+    tests_reviewed = sum(r.get("tests_reviewed", 0) for r in rows)
     return {
+        "profile_detection_rate": _rate(rows, "profile_detected"),
+        "outcome_rate": _rate(rows, "outcome_ok"),
+        "test_acceptance_rate": (sum(r.get("tests_accepted", 0) for r in rows) / tests_reviewed)
+        if tests_reviewed
+        else 0.0,
+        "tests_reviewed": tests_reviewed,
+        "median_wall_seconds": statistics.median(wall) if wall else 0.0,
+        "false_findings": sum(bool(r.get("profile_findings")) for r in rows if r.get("suite", "v1") == "v1"),
         "scenarios": len(rows),
         "detection_rate": _rate(rows, "detected"),
         "diagnosis_accuracy": _rate(rows, "diagnosis_correct"),
@@ -131,43 +169,88 @@ def load_results(path: Path) -> list[dict]:
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def report(paths: list[Path]) -> str:
-    """Tableau Markdown des résultats (global et par scénario, pour chaque raisonneur)."""
-    rows = [r for p in paths for r in load_results(p)]
-    by_provider: dict[str, list[dict]] = defaultdict(list)
-    for r in rows:
-        by_provider[r["provider"]].append(r)
-    pct = lambda x: f"{x:.0%}"  # noqa: E731
-    lines = ["| Indicateur | " + " | ".join(by_provider) + " |", "|---|" + "---|" * len(by_provider)]
+def _table(by_provider: dict[str, list[dict]], labels: list) -> list[str]:
     summaries = {p: summarize(rs) for p, rs in by_provider.items()}
-    labels = [
-        ("scenarios", "Scénarios évalués", str),
-        ("detection_rate", "Anomalies détectées par dbt", pct),
-        ("diagnosis_accuracy", "Bon diagnostic (catégorie)", pct),
-        ("root_column_accuracy", "Bonne colonne d'origine", pct),
-        ("acceptance_rate", "Corrections acceptées / proposées au relecteur", pct),
-        ("resolution_rate", "Incidents résolus (tests verts et données exactes)", pct),
-        ("automation_rate", "Taux d'automatisation (1re proposition acceptée)", pct),
-        ("guardrail_rejections", "Propositions bloquées par les garde-fous", str),
-        ("median_agent_seconds", "Latence médiane de l'agent (s)", lambda x: f"{x:.1f}"),
-        ("p90_agent_seconds", "Latence p90 de l'agent (s)", lambda x: f"{x:.1f}"),
-        ("median_llm_seconds", "Dont temps LLM médian (s)", lambda x: f"{x:.1f}"),
-    ]
+    lines = ["| Indicateur | " + " | ".join(by_provider) + " |", "|---|" + "---|" * len(by_provider)]
     for key, label, fmt in labels:
         lines.append(f"| {label} | " + " | ".join(fmt(summaries[p][key]) for p in by_provider) + " |")
-    lines += [
+    return lines
+
+
+def _per_scenario(by_provider, scenarios, header, cell) -> list[str]:
+    lines = [
         "",
-        "| Scénario (catégorie) | " + " | ".join(f"{p} : diagnostic / résolu" for p in by_provider) + " |",
+        "| Scénario | " + " | ".join(f"{p} : {header}" for p in by_provider) + " |",
         "|---|" + "---|" * len(by_provider),
     ]
-    for scenario, spec in anomalies.SCENARIOS.items():
+    for scenario, spec in scenarios.items():
         cells = []
         for p in by_provider:
             rs = [r for r in by_provider[p] if r["scenario"] == scenario]
-            cells.append(
-                f"{sum(r['diagnosis_correct'] for r in rs)}/{len(rs)} · {sum(r['resolved'] for r in rs)}/{len(rs)}"
-                if rs
-                else "-"
+            cells.append(cell(rs) if rs else "-")
+        lines.append(f"| `{scenario}` ({spec.category}) | " + " | ".join(cells) + " |")
+    return lines
+
+
+def report(paths: list[Path]) -> str:
+    """Tableaux Markdown : suite v1 (anomalies vues par dbt) et suite v2 (anomalies sans test)."""
+    rows = [r for p in paths for r in load_results(p)]
+    pct = lambda x: f"{x:.0%}"  # noqa: E731
+    sec = lambda x: f"{x:.1f}"  # noqa: E731
+    out = []
+    for suite, scenarios in (("v1", anomalies.SCENARIOS), ("v2", anomalies.V2_SCENARIOS)):
+        by_provider: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            if r.get("suite", "v1") == suite:
+                by_provider[r["provider"]].append(r)
+        if not by_provider:
+            continue
+        if suite == "v1":
+            out.append("**Anomalies détectées par les tests dbt** (8 scénarios)\n")
+            out += _table(
+                by_provider,
+                [
+                    ("scenarios", "Scénarios évalués", str),
+                    ("detection_rate", "Anomalies détectées par dbt", pct),
+                    ("diagnosis_accuracy", "Bon diagnostic (catégorie)", pct),
+                    ("root_column_accuracy", "Bonne colonne d'origine", pct),
+                    ("acceptance_rate", "Corrections acceptées / soumises au relecteur", pct),
+                    ("resolution_rate", "Incidents résolus (tests verts, données exactes)", pct),
+                    ("automation_rate", "Taux d'automatisation (1re proposition acceptée)", pct),
+                    ("guardrail_rejections", "Propositions bloquées par les garde-fous", str),
+                    ("false_findings", "Fausses alertes du profileur après correction", str),
+                    ("median_agent_seconds", "Latence médiane par incident (s)", sec),
+                    ("p90_agent_seconds", "Latence p90 par incident (s)", sec),
+                    ("median_llm_seconds", "Dont temps LLM médian (s)", sec),
+                ],
             )
-        lines.append(f"| {scenario} ({spec.category}) | " + " | ".join(cells) + " |")
-    return "\n".join(lines)
+            out += _per_scenario(
+                by_provider,
+                scenarios,
+                "diagnostic / résolu",
+                lambda rs: (
+                    f"{sum(r['diagnosis_correct'] for r in rs)}/{len(rs)} · {sum(r['resolved'] for r in rs)}/{len(rs)}"
+                ),
+            )
+        else:
+            out.append("\n**Anomalies qu'aucun test dbt ne voit** (5 scénarios, profileur + Isolation Forest)\n")
+            out += _table(
+                by_provider,
+                [
+                    ("scenarios", "Scénarios évalués", str),
+                    ("profile_detection_rate", "Anomalies détectées par le profileur", pct),
+                    ("test_acceptance_rate", "Tests proposés acceptés / soumis au relecteur", pct),
+                    ("outcome_rate", "Bonne issue (réparé, ou alerte si irréparable)", pct),
+                    ("automation_rate", "Taux d'automatisation", pct),
+                    ("median_wall_seconds", "Durée médiane de bout en bout (s)", sec),
+                ],
+            )
+            out += _per_scenario(
+                by_provider,
+                scenarios,
+                "détecté / bonne issue",
+                lambda rs: (
+                    f"{sum(r['profile_detected'] for r in rs)}/{len(rs)} · {sum(r['outcome_ok'] for r in rs)}/{len(rs)}"
+                ),
+            )
+    return "\n".join(out)

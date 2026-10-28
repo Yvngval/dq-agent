@@ -1,4 +1,4 @@
-"""Serveur MCP en lecture seule : schéma de l'entrepôt, résultats des tests dbt, journal des décisions.
+"""Serveur MCP en lecture seule : schéma de l'entrepôt, tests dbt, profil statistique, journal des décisions.
 
 Permet à un assistant compatible MCP (Claude Desktop, Claude Code...) d'inspecter le pipeline
 sans pouvoir le modifier. Lancement : `dq mcp` (transport stdio).
@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import json
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from dq_agent import context as ctx
 from dq_agent import dbt_runner
 from dq_agent.config import settings
-from dq_agent.warehouse import RAW_TABLES, connect, fetch_dicts, table_columns
+from dq_agent.warehouse import connect, fetch_dicts, table_columns
 
-server = FastMCP("dq-agent")
+server = MCPServer(
+    "dq-agent",
+    instructions="Read-only access to a dbt + DuckDB data-quality agent: warehouse schema, dbt test results, "
+    "statistical profile findings, decision log and quarantine.",
+)
 
 
 @server.tool()
@@ -41,7 +45,7 @@ def source_contract() -> dict:
     """Colonnes attendues des tables raw (contrat déclaré dans dbt) et écart avec le schéma réel."""
     contract = dbt_runner.source_contract()
     with connect(read_only=True) as con:
-        actual = {t: [c for c, _ in table_columns(con, t)] for t in RAW_TABLES}
+        actual = {t: [c for c, _ in table_columns(con, t)] for t in dbt_runner.writable_tables()}
     return {
         table: {
             "expected": [c["name"] for c in cols],
@@ -60,8 +64,19 @@ def test_results() -> dict:
     return {
         "counts": counts,
         "failures": [
-            {k: f.to_dict()[k] for k in ("unique_id", "test_type", "model", "column", "failures", "message",
-                                         "source_table", "source_columns")}
+            {
+                k: f.to_dict()[k]
+                for k in (
+                    "unique_id",
+                    "test_type",
+                    "model",
+                    "column",
+                    "failures",
+                    "message",
+                    "source_table",
+                    "source_columns",
+                )
+            }
             for f in failures
         ],
     }
@@ -84,6 +99,14 @@ def column_profile(table: str, column: str) -> dict:
     """Profil d'une colonne : nombre de NULL, valeurs distinctes, min, max, exemples."""
     with connect(read_only=True) as con:
         return ctx.column_profile(con, table, column)
+
+
+@server.tool()
+def profile_findings() -> list[dict]:
+    """Écarts entre les tables raw et leur profil de référence (anomalies qu'aucun test dbt ne couvre)."""
+    from dq_agent import profiler
+
+    return [{k: v for k, v in f.to_dict().items() if k != "condition"} for f in profiler.findings()]
 
 
 @server.tool()

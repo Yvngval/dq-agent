@@ -52,10 +52,21 @@ def compare_to_expected(con, expected: str = "eval.expected_flights", actual: st
     }
 
 
+def injected_row_ids(con) -> set[int] | None:
+    exists = con.execute(
+        "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'eval' AND table_name = 'injection'"
+    ).fetchone()[0]
+    if not exists:
+        return None
+    return set(json.loads(con.execute("SELECT payload FROM eval.injection").fetchone()[0])["row_ids"])
+
+
 class OracleReviewer:
     name = "oracle"
 
     def review(self, payload: dict) -> dict:
+        if payload.get("kind") == "test":
+            return self.review_test(payload)
         sql = payload["proposal"]["sql"]
         with connect() as con:
             con.execute("BEGIN TRANSACTION")
@@ -67,6 +78,25 @@ class OracleReviewer:
         if diff["match"]:
             return {"decision": "approve", "reviewer": self.name, "diff": diff}
         return {"decision": "reject", "reviewer": self.name, "diff": diff, "comment": _oracle_comment(diff)}
+
+    def review_test(self, payload: dict) -> dict:
+        """Un test est accepté s'il signale toutes les lignes injectées et aucune ligne de l'historique propre."""
+        table, condition = payload["finding"]["table"], payload["proposal"]["condition"]
+        with connect(read_only=True) as con:
+            injected = injected_row_ids(con) or set()
+            flagged = {r[0] for r in con.execute(f"SELECT _row_id FROM {table} WHERE {condition}").fetchall()}
+        history = payload["validation"]["history_rows"] or 0
+        missed = len(injected - flagged)
+        if injected and not missed and not history:
+            return {"decision": "approve", "reviewer": self.name}
+        reasons = []
+        if history:
+            reasons.append(f"it would also flag {history} rows of the validated history (false positives)")
+        if missed:
+            reasons.append(f"it misses {missed} faulty rows")
+        if not injected:
+            reasons.append("this finding is not a data problem")
+        return {"decision": "reject", "reviewer": self.name, "comment": "Rejected: " + " and ".join(reasons) + "."}
 
 
 def _oracle_comment(diff: dict) -> str:
@@ -97,6 +127,8 @@ class CLIReviewer:
         self.console = console or Console()
 
     def review(self, payload: dict) -> dict:
+        if payload.get("kind") == "test":
+            return self.review_test(payload)
         c = self.console
         f, d, p, v = payload["failure"], payload["diagnosis"], payload["proposal"], payload["validation"]
         c.rule(f"[bold]Incident {payload['incident_id']}[/] · tentative {payload['attempt']}")
@@ -149,3 +181,45 @@ class CLIReviewer:
                     c.print(f"Simulation OK : {check.affected_rows} ligne(s) touchée(s).")
                     return {"decision": "edit", "reviewer": self.name, "sql": sql}
                 c.print(f"[red]Refusé par les garde-fous :[/] {json.dumps(check.errors, ensure_ascii=False)}")
+
+    def review_test(self, payload: dict) -> dict:
+        c = self.console
+        f, p, v = payload["finding"], payload["proposal"], payload["validation"]
+        c.rule(f"[bold]Nouveau test proposé[/] · tentative {payload['attempt']}")
+        c.print(
+            Panel(
+                f"[bold]{f['kind']}[/] sur {f['table']}.{f['column'] or '*'} · {f['rows']} lignes\n{f['message']}",
+                title="Constat du profileur (aucun test dbt ne l'a vu)",
+                expand=False,
+            )
+        )
+        c.print(f"[bold]{p['name']}[/] : {p['description']}")
+        c.print(Syntax(f"select * from {f['table']} where {p['condition']}", "sql", word_wrap=True))
+        c.print(f"[dim]{p['reasoning']}[/]")
+        history = "inconnu" if v["history_rows"] is None else str(v["history_rows"])
+        c.print(f"Lignes signalées aujourd'hui : {v['current_rows']} · dans l'historique validé : {history}")
+        while True:
+            choice = (
+                c.input(
+                    "[bold][a][/]jouter le test · [bold][r][/]ejeter · [bold][m][/]odifier la condition · "
+                    "[bold][e][/]scalader > "
+                )
+                .strip()
+                .lower()
+            )
+            if choice in ("a", "ajouter"):
+                return {"decision": "approve", "reviewer": self.name}
+            if choice in ("r", "rejeter"):
+                return {
+                    "decision": "reject",
+                    "reviewer": self.name,
+                    "comment": c.input("Pourquoi ? (transmis à l'agent) > ").strip(),
+                }
+            if choice in ("e", "escalader"):
+                return {"decision": "escalate", "reviewer": self.name, "comment": c.input("Note > ").strip()}
+            if choice in ("m", "modifier"):
+                return {
+                    "decision": "edit",
+                    "reviewer": self.name,
+                    "condition": c.input("Condition SQL (sans WHERE) > ").strip(),
+                }

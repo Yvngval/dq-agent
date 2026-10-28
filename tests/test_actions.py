@@ -14,15 +14,27 @@ def make(**kw):
 @pytest.mark.parametrize(
     ("kw", "expected"),
     [
-        ({"action": "recompute", "columns": ["day"], "condition": "day IS NULL",
-          "expression": "CAST(lastseen AS DATE)"},
-         "UPDATE raw.flights SET day = CAST(lastseen AS DATE) WHERE day IS NULL"),
-        ({"action": "swap_values", "columns": ["firstseen", "lastseen"], "condition": "WHERE lastseen < firstseen"},
-         "UPDATE raw.flights SET firstseen = lastseen, lastseen = firstseen WHERE lastseen < firstseen"),
-        ({"action": "set_null", "columns": ["altitude_1"], "condition": "first_altitude_m > 16000"},
-         "UPDATE raw.flights SET altitude_1 = NULL WHERE altitude_1 > 16000"),
-        ({"action": "rename_column", "columns": ["arrival_airport", "destination"]},
-         "ALTER TABLE raw.flights RENAME COLUMN arrival_airport TO destination"),
+        (
+            {
+                "action": "recompute",
+                "columns": ["day"],
+                "condition": "day IS NULL",
+                "expression": "CAST(lastseen AS DATE)",
+            },
+            "UPDATE raw.flights SET day = CAST(lastseen AS DATE) WHERE day IS NULL",
+        ),
+        (
+            {"action": "swap_values", "columns": ["firstseen", "lastseen"], "condition": "WHERE lastseen < firstseen"},
+            "UPDATE raw.flights SET firstseen = lastseen, lastseen = firstseen WHERE lastseen < firstseen",
+        ),
+        (
+            {"action": "set_null", "columns": ["altitude_1"], "condition": "first_altitude_m > 16000"},
+            "UPDATE raw.flights SET altitude_1 = NULL WHERE altitude_1 > 16000",
+        ),
+        (
+            {"action": "rename_column", "columns": ["arrival_airport", "destination"]},
+            "ALTER TABLE raw.flights RENAME COLUMN arrival_airport TO destination",
+        ),
         ({"action": "delete_rows", "condition": "icao24 IS NULL"}, "DELETE FROM raw.flights WHERE icao24 IS NULL"),
         ({"action": "escalate"}, ""),
     ],

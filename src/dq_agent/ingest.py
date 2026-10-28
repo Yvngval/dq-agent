@@ -121,10 +121,14 @@ def certify_baseline() -> dict[str, int]:
 
 
 def snapshot() -> None:
+    """Copie de référence des tables raw et profil statistique associé (pour le profileur)."""
+    from dq_agent import profiler
+
     with connect() as con:
         con.execute("CREATE SCHEMA IF NOT EXISTS snapshot")
         con.execute("CREATE OR REPLACE TABLE snapshot.flights AS SELECT * FROM raw.flights")
         con.execute("CREATE OR REPLACE TABLE snapshot.airports AS SELECT * FROM raw.airports")
+    profiler.build_baseline()
 
 
 def reset() -> None:

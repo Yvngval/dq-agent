@@ -14,10 +14,12 @@ dependencies = [
     "httpx>=0.28.1",
     "langgraph>=1.2.18",
     "langgraph-checkpoint-sqlite>=3.1.2",
+    "mcp>=2.3.0",
     "pydantic>=2.14.1",
     "python-dotenv>=1.2.4",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "scikit-learn>=1.9.1",
     "sqlglot>=30.25.0",
     "typer>=0.27.3",
 ]
@@ -42,3 +44,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]  # typer.Option() en valeur par défaut est l'usage recommandé par Typer

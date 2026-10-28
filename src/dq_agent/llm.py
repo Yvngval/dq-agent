@@ -20,7 +20,7 @@ T = TypeVar("T", bound=BaseModel)
 class StructuredLLM(Protocol):
     name: str
 
-    def generate(self, system: str, user: str, schema: type[T]) -> T: ...
+    def generate(self, system: str, user: str, schema: type[T], variation: int = 0) -> T: ...
 
 
 class OllamaLLM:
@@ -31,7 +31,7 @@ class OllamaLLM:
         self.name = f"ollama:{self.model}"
         self._client = httpx.Client(timeout=timeout)
 
-    def generate(self, system: str, user: str, schema: type[T]) -> T:
+    def generate(self, system: str, user: str, schema: type[T], variation: int = 0) -> T:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -39,7 +39,15 @@ class OllamaLLM:
             "stream": False,
             "keep_alive": "30m",
             # Décodage déterministe ; la pénalité de répétition évite les boucles du décodage glouton.
-            "options": {"temperature": 0, "seed": 42, "repeat_penalty": 1.15, "num_ctx": 8192, "num_predict": 700},
+            # Après un refus (variation > 0), un peu d'aléa à graine fixe : sinon un petit modèle
+            # reproduit la même réponse, et l'exécution reste reproductible.
+            "options": {
+                "temperature": 0.7 if variation else 0,
+                "seed": 42 + variation,
+                "repeat_penalty": 1.15,
+                "num_ctx": 8192,
+                "num_predict": 700,
+            },
         }
         response = self._client.post(f"{self.host}/api/chat", json=payload)
         if response.status_code >= 500:
@@ -66,7 +74,7 @@ class AnthropicLLM:
         self.name = f"anthropic:{self.model}"
         self._client = anthropic.Anthropic()
 
-    def generate(self, system: str, user: str, schema: type[T]) -> T:
+    def generate(self, system: str, user: str, schema: type[T], variation: int = 0) -> T:
         # Repli côté serveur si le modèle décline la requête (stop_reason "refusal").
         response = self._client.beta.messages.parse(
             model=self.model,

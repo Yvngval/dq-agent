@@ -23,7 +23,6 @@ TEST_PRIORITY = {
     "in_range": 4,
     "unique_combination": 5,
 }
-MODEL_DEPTH = {"stg_airports": 0, "stg_flights": 1, "fct_flights": 2, "mart_airport_daily_traffic": 3}
 
 
 @dataclass
@@ -42,6 +41,7 @@ class Failure:
     failures_relation: str | None = None
     source_table: str | None = None
     source_columns: list[str] = field(default_factory=list)
+    depth: int = 0  # profondeur du modèle dans le graphe dbt (0 = sources)
 
     @property
     def key(self) -> str:
@@ -50,7 +50,7 @@ class Failure:
     def sort_key(self) -> tuple:
         return (
             0 if self.resource_type == "model" else 1,
-            MODEL_DEPTH.get(self.model or "", 9),
+            self.depth,
             TEST_PRIORITY.get(self.test_type or "", 6),
             self.unique_id,
         )
@@ -76,8 +76,18 @@ def _dbt_executable() -> str:
 def run_dbt(args: list[str]) -> subprocess.CompletedProcess:
     s = settings()
     env = {**os.environ, "DQ_DUCKDB_PATH": str(s.duckdb_path.resolve())}
-    cmd = [_dbt_executable(), *args, "--project-dir", str(s.dbt_dir), "--profiles-dir", str(s.dbt_dir),
-           "--target-path", str(s.dbt_target), "--log-path", str(s.dbt_target / "logs")]
+    cmd = [
+        _dbt_executable(),
+        *args,
+        "--project-dir",
+        str(s.dbt_dir),
+        "--profiles-dir",
+        str(s.dbt_dir),
+        "--target-path",
+        str(s.dbt_target),
+        "--log-path",
+        str(s.dbt_target / "logs"),
+    ]
     return subprocess.run(cmd, cwd=s.dbt_dir, env=env, capture_output=True, text=True)
 
 
@@ -109,12 +119,13 @@ def parse_artifacts(run_results_path: Path, manifest_path: Path) -> tuple[list[F
         if status not in ("error", "fail"):
             continue
         node = nodes.get(result["unique_id"], {})
-        failures.append(_to_failure(result, node, nodes))
+        failures.append(_to_failure(result, node, manifest))
     failures.sort(key=Failure.sort_key)
     return failures, counts
 
 
-def _to_failure(result: dict, node: dict, nodes: dict) -> Failure:
+def _to_failure(result: dict, node: dict, manifest: dict) -> Failure:
+    nodes = manifest["nodes"]
     resource_type = node.get("resource_type", result["unique_id"].split(".")[0])
     metadata = node.get("test_metadata") or {}
     kwargs = dict(metadata.get("kwargs") or {})
@@ -136,6 +147,10 @@ def _to_failure(result: dict, node: dict, nodes: dict) -> Failure:
         meta = (model_node.get("columns", {}).get(column) or {}).get("meta") or {}
         source_table = meta.get("source_table")
         source_columns = list(meta.get("source_columns") or [])
+    if source_table is None:  # test singulier ou sans lignage déclaré : la source unique en amont, s'il y en a une
+        upstream = upstream_sources(node.get("unique_id", result["unique_id"]), manifest)
+        if len(upstream) == 1:
+            source_table = upstream[0]
 
     relation = result.get("relation_name") or node.get("relation_name")
     return Failure(
@@ -153,7 +168,56 @@ def _to_failure(result: dict, node: dict, nodes: dict) -> Failure:
         failures_relation=relation if resource_type == "test" else None,
         source_table=source_table,
         source_columns=source_columns,
+        depth=model_depths(manifest).get(model, 0 if model is None else 9),
     )
+
+
+def model_depths(manifest: dict) -> dict[str, int]:
+    """Profondeur de chaque modèle dans le graphe dbt : on traite d'abord les causes en amont."""
+    nodes = manifest["nodes"]
+    depth: dict[str, int] = {}
+
+    def visit(uid: str) -> int:
+        if uid in depth:
+            return depth[uid]
+        parents = [p for p in nodes.get(uid, {}).get("depends_on", {}).get("nodes", []) if p.startswith("model.")]
+        depth[uid] = 1 + max((visit(p) for p in parents), default=0)
+        return depth[uid]
+
+    return {n["name"]: visit(uid) for uid, n in nodes.items() if n.get("resource_type") == "model"}
+
+
+def upstream_sources(unique_id: str, manifest: dict) -> list[str]:
+    """Tables sources (schéma.table) dont dépend un nœud, en remontant le graphe dbt."""
+    found, stack, seen = set(), [unique_id], set()
+    while stack:
+        uid = stack.pop()
+        if uid in seen:
+            continue
+        seen.add(uid)
+        if uid.startswith("source."):
+            src = manifest["sources"][uid]
+            found.add(f"{src['schema']}.{src['name']}")
+            continue
+        stack.extend(manifest["nodes"].get(uid, {}).get("depends_on", {}).get("nodes", []))
+    return sorted(found)
+
+
+def writable_tables() -> tuple[str, ...]:
+    """Tables que l'agent a le droit de corriger : les sources déclarées dans le projet dbt."""
+    path = settings().dbt_target / "manifest.json"
+    if not path.exists():
+        run_dbt(["parse", "--quiet"])
+    return tuple(sorted(source_contract(json.loads(path.read_text()))))
+
+
+def source_ref(table: str, manifest: dict | None = None) -> str:
+    """Expression Jinja `{{ source(...) }}` d'une table raw, pour écrire un test dbt."""
+    manifest = manifest or load_manifest()
+    for src in manifest["sources"].values():
+        if f"{src['schema']}.{src['name']}" == table:
+            return f"{{{{ source('{src['source_name']}', '{src['name']}') }}}}"
+    raise KeyError(table)
 
 
 def _render_vars(value):
@@ -225,7 +289,7 @@ def staging_expressions(manifest: dict | None = None) -> dict[str, str]:
     for node in manifest["nodes"].values():
         if node.get("resource_type") != "model" or not node["name"].startswith("stg_"):
             continue
-        sql = re.sub(r"\{\{.*?\}\}", "source_table", node.get("raw_code") or "", flags=re.S)
+        sql = re.sub(r"\{\{.*?\}\}", "source_table", node.get("raw_code") or "", flags=re.DOTALL)
         try:
             tree = sqlglot.parse_one(sql, read="duckdb")
         except sqlglot.errors.ParseError:

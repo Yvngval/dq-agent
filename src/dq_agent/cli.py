@@ -77,8 +77,13 @@ def inject(
 ) -> None:
     """Injecte une anomalie reproductible dans la zone raw (après restauration de la référence)."""
     if list_ or (scenario is None and not mix):
-        for name, s in anomalies.SCENARIOS.items():
-            console.print(f"[bold]{name}[/] ({s.category}) : {s.description}")
+        for title, group in (
+            ("Vues par les tests dbt", anomalies.SCENARIOS),
+            ("Invisibles pour les tests (profileur)", anomalies.V2_SCENARIOS),
+        ):
+            console.rule(title)
+            for name, s in group.items():
+                console.print(f"[bold]{name}[/] ({s.category}) : {s.description}")
         return
     if mix:
         names = ["duplicate_rows", "missing_flight_date", "altitude_outlier", "lowercase_airport_codes"]
@@ -87,6 +92,21 @@ def inject(
         return
     inj = anomalies.inject(scenario, seed)
     console.print(f"{inj.scenario} ({inj.category}) : {len(inj.row_ids)} lignes, colonnes {inj.columns} {inj.details}")
+
+
+@app.command()
+def profile() -> None:
+    """Compare les tables raw au profil de référence (détection sans test écrit à l'avance)."""
+    from dq_agent import profiler
+
+    found = profiler.findings()
+    if not found:
+        console.print("[green]Aucun écart avec le profil de référence.[/]")
+        return
+    table = Table("Constat", "Table.colonne", "Lignes", "Message")
+    for f in found:
+        table.add_row(f.kind, f"{f.table}.{f.column or '*'}", str(f.rows), f.message[:90])
+    console.print(table)
 
 
 @app.command()
@@ -128,6 +148,7 @@ def evaluate(
     provider: str = typer.Option("rules", help="ollama, anthropic ou rules."),
     seeds: int = typer.Option(5, help="Nombre de graines par scénario."),
     scenario: list[str] = typer.Option(None, help="Restreindre à certains scénarios."),
+    suite: str = typer.Option("all", help="v1 (vus par dbt), v2 (sans test) ou all."),
     out: Path = typer.Option(None, help="Fichier JSONL de résultats."),
 ) -> None:
     """Évalue l'agent sur les anomalies injectées, avec le relecteur simulé."""
@@ -138,8 +159,12 @@ def evaluate(
     out = out or settings().root / "reports" / f"results_{provider}.jsonl"
     if out.exists():
         out.unlink()
-    rows = ev.evaluate(reasoner, scenario or list(anomalies.SCENARIOS), list(range(1, seeds + 1)), out)
+    suites = {"v1": anomalies.SCENARIOS, "v2": anomalies.V2_SCENARIOS, "all": anomalies.ALL_SCENARIOS}
+    rows = ev.evaluate(reasoner, scenario or list(suites[suite]), list(range(1, seeds + 1)), out)
     console.print_json(json.dumps(ev.summarize(rows)))
+    from dq_agent import monitoring
+
+    monitoring.clear_generated_tests()
     ingest.reset()
 
 

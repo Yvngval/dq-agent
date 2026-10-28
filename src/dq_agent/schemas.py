@@ -13,6 +13,7 @@ Category = Literal[
     "schema_drift",
     "date_inconsistency",
     "referential_integrity",
+    "format_inconsistency",
     "other",
 ]
 
@@ -61,3 +62,16 @@ class FreeSQLFix(BaseModel):
     action: Literal["update", "delete", "rename_column", "escalate"]
     sql: str = Field(description="A single DuckDB SQL statement, or an empty string when action is escalate.")
     rationale: str = Field(description="Why this fix is correct and safe, in one or two sentences.")
+
+
+class TestProposal(BaseModel):
+    """Proposition d'un nouveau test dbt à partir d'un constat du profileur."""
+
+    reasoning: str = Field(description="Is this finding a data quality problem that deserves a permanent test? Why?")
+    action: Literal["add_test", "escalate"]
+    name: str = Field(description="snake_case test name, e.g. typecode_is_upper_case.")
+    description: str = Field(description="What the test checks, in one sentence.")
+    condition: str = Field(
+        description="SQL boolean condition over raw columns selecting the rows that violate the expectation, "
+        "without WHERE; empty when action is escalate."
+    )
