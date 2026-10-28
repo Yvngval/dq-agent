@@ -37,7 +37,11 @@ Un pipeline de données casse rarement en silence : un fichier arrive avec une c
 ## Résultats
 
 <!-- RESULTS:START -->
-Mesuré le 28/10/2026 sur un Mac Apple M4 (16 Go) : 13 scénarios × 5 graines, soit 65 exécutions par raisonneur, face au relecteur simulé décrit dans [Évaluation](#évaluation). LLM : `qwen2.5-coder:7b` en local via Ollama. Détail complet dans [`reports/RESULTS.md`](reports/RESULTS.md), une ligne par exécution dans `reports/results_*.jsonl`.
+### Vols (OpenSky, données réelles)
+
+Mesuré le 28/10/2026 au commit `60d82f1`, sur un Mac Apple M4 (16 Go) : 13 scénarios × 5 graines, soit 65 exécutions par raisonneur, face au relecteur simulé décrit dans [Évaluation](#évaluation). LLM : `qwen2.5-coder:7b` en local via Ollama. Détail complet dans [`reports/RESULTS.md`](reports/RESULTS.md), une ligne par exécution dans `reports/results_*.jsonl`.
+
+Depuis, l'agent a été rendu générique, et seuls deux exemples ont changé dans le texte donné au LLM. Relancé sur la version finale, le raisonneur à base de règles obtient exactement les mêmes issues sur les 65 exécutions.
 
 **8 anomalies vues par les tests dbt** (40 exécutions par raisonneur)
 
@@ -93,6 +97,59 @@ Le profileur n'a levé aucune fausse alerte sur les scénarios vus par dbt (0 su
 - **Le coût de l'hybride sur les anomalies sans test.** Quand les règles jugent une anomalie irréparable (pic de NULL, volume en baisse), l'hybride passe quand même la main au LLM, qui propose jusqu'à 3 tests refusés avant de lever la même alerte. L'issue reste juste, mais l'automatisation tombe de 64 % à 20 %. Faire confiance à l'escalade des règles est la prochaine amélioration.
 - **Points faibles mesurés.** `typecode_lowercase` : le nouveau test est accepté 15 fois sur 15, mais la remise en majuscules qui suit n'aboutit qu'une fois sur 15. `swapped_coordinates` : l'Isolation Forest ne repère l'inversion que 3 fois sur 5. `swapped_timestamps` : le test de durée en échec oriente vers une valeur aberrante, d'où 1 bon diagnostic sur 15.
 - **Progrès depuis la première version**, sur les mêmes 8 scénarios : le LLM seul passe de 42 % à 55 % d'incidents résolus et de 59 s à 38 s de latence médiane. Dans la v1, le laisser écrire son SQL librement au lieu de choisir une action typée faisait tomber l'automatisation de 35 % à 6 % et l'acceptation de 49 % à 37 %. Voir [`reports/v1/RESULTS.md`](reports/v1/RESULTS.md).
+
+### Second projet dbt : stations météo
+
+Mesuré le 28/10/2026 au commit `b2a1d34`, sur le même Mac et avec le même LLM : 10 scénarios × 5 graines, soit 50 exécutions par raisonneur, sur des données synthétiques (32 stations, 10 752 relevés horaires). Détail dans [`reports/weather/RESULTS.md`](reports/weather/RESULTS.md).
+
+**7 anomalies vues par les tests dbt** (35 exécutions par raisonneur)
+
+| Indicateur | Règles | Hybride (règles, puis LLM) | LLM seul |
+|---|---|---|---|
+| Bon diagnostic (catégorie) | 100 % | 100 % | 100 % |
+| Incidents résolus (tests verts, données exactes) | 71 % | **86 %** | 46 % |
+| Taux d'automatisation | 71 % | 71 % | 37 % |
+| Corrections acceptées par le relecteur | 71 % | 75 % | 70 % |
+| Propositions bloquées par les garde-fous | 0 | 9 | 43 |
+| Latence par incident, médiane / p90 | 3,0 s / 3,1 s | 3,0 s / 45 s | 56 s / 81 s |
+
+**3 anomalies qu'aucun test dbt ne voit** (15 exécutions par raisonneur)
+
+| Indicateur | Règles | Hybride (règles, puis LLM) | LLM seul |
+|---|---|---|---|
+| Anomalie repérée par le profileur | 100 % | 100 % | 100 % |
+| Tests proposés acceptés par le relecteur | 100 % | 100 % | 100 % |
+| Bonne issue (réparée, ou alerte si irréparable) | 67 % | 67 % | 40 % |
+| Taux d'automatisation | 67 % | 40 % | 7 % |
+| Durée médiane de bout en bout | 6,8 s | 36 s | 68 s |
+
+<details>
+<summary>Détail par scénario</summary>
+
+| Scénario | Règles : diagnostic · résolu | Hybride : diagnostic · résolu | LLM seul : diagnostic · résolu |
+|---|---|---|---|
+| `missing_station_code` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 3/5 |
+| `missing_fahrenheit` | 5/5 · 0/5 | 5/5 · 4/5 | 5/5 · 1/5 |
+| `duplicate_readings` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `pressure_sentinel` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `schema_drift_rename` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 1/5 |
+| `observation_date_shift` | 5/5 · 0/5 | 5/5 · 1/5 | 5/5 · 1/5 |
+| `lowercase_station_codes` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 0/5 |
+
+| Scénario | Règles : repéré · bonne issue | Hybride : repéré · bonne issue | LLM seul : repéré · bonne issue |
+|---|---|---|---|
+| `sensor_model_lowercase` | 5/5 · 0/5 | 5/5 · 0/5 | 5/5 · 1/5 |
+| `future_readings` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 0/5 |
+| `station_outage` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+
+</details>
+
+**À retenir**
+
+- **Les mêmes tendances que sur les vols, sans toucher au code de l'agent.** L'hybride résout le plus d'incidents : 86 %, contre 71 % pour les règles et 46 % pour le LLM seul. Le LLM prend le relais quand la règle générique échoue, par exemple pour recalculer `temperature_f` depuis `temperature_c` grâce à la description de la colonne (4/5 contre 0/5).
+- **Les mêmes points faibles aussi.** `observation_date_shift` n'est réparé qu'une fois sur 5 par l'hybride. Pour `sensor_model_lowercase`, le nouveau test est accepté 15 fois sur 15, mais la remise en majuscules n'aboutit qu'une fois sur 15. Sur la panne de station, l'hybride passe la main au LLM, qui propose jusqu'à 3 tests refusés avant de lever la même alerte que les règles (automatisation de 40 % contre 67 %).
+- **PostgreSQL.** Le même projet relancé sur PostgreSQL donne exactement les mêmes issues que sur DuckDB pour les 50 exécutions du raisonneur à base de règles (latence médiane par incident : 2,9 s, contre 3,0 s sur DuckDB).
+- **Prudence sur les temps du LLM seul** : une partie de son évaluation a tourné pendant que d'autres calculs occupaient la machine.
 <!-- RESULTS:END -->
 
 ---

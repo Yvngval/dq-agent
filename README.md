@@ -37,7 +37,11 @@ Data pipelines rarely break silently: a file arrives with a renamed column, a ba
 ## Results
 
 <!-- RESULTS:START -->
-Measured on 28/10/2026 on an Apple M4 Mac (16 GB): 13 scenarios × 5 seeds, i.e. 65 runs per reasoner, against the simulated reviewer described in [Evaluation](#evaluation). LLM: `qwen2.5-coder:7b`, run locally with Ollama. Full details in [`reports/RESULTS.md`](reports/RESULTS.md) (in French), one line per run in `reports/results_*.jsonl`.
+### Flights (OpenSky, real data)
+
+Measured on 28/10/2026 at commit `60d82f1`, on an Apple M4 Mac (16 GB): 13 scenarios × 5 seeds, i.e. 65 runs per reasoner, against the simulated reviewer described in [Evaluation](#evaluation). LLM: `qwen2.5-coder:7b`, run locally with Ollama. Full details in [`reports/RESULTS.md`](reports/RESULTS.md) (in French), one line per run in `reports/results_*.jsonl`.
+
+Since then, the agent has been made generic, and only two examples have changed in the text given to the LLM. Rerun on the final version, the rule-based reasoner gets exactly the same outcomes on all 65 runs.
 
 **8 anomalies that dbt tests catch** (40 runs per reasoner)
 
@@ -93,6 +97,59 @@ The profiler raised no false alert on the scenarios dbt catches (0 out of 120 ru
 - **The cost of the hybrid on anomalies without a test.** When the rules judge an anomaly irreparable (NULL spike, volume drop), the hybrid still hands over to the LLM, which proposes up to 3 rejected tests before raising the same alert. The outcome is still correct, but automation drops from 64% to 20%. Trusting the rules' escalation is the next improvement.
 - **Measured weak spots.** `typecode_lowercase`: the new test is accepted 15 times out of 15, but the upper-casing that follows only succeeds once in 15. `swapped_coordinates`: the Isolation Forest spots the swap only 3 times out of 5. `swapped_timestamps`: the failing duration test points towards an outlier, hence 1 correct diagnosis out of 15.
 - **Progress since the first version**, on the same 8 scenarios: the LLM alone goes from 42% to 55% of incidents resolved and from 59 s to 38 s median latency. In v1, letting it write free SQL instead of choosing a typed action dropped automation from 35% to 6% and acceptance from 49% to 37%. See [`reports/v1/RESULTS.md`](reports/v1/RESULTS.md) (in French).
+
+### Second dbt project: weather stations
+
+Measured on 28/10/2026 at commit `b2a1d34`, on the same Mac and with the same LLM: 10 scenarios × 5 seeds, i.e. 50 runs per reasoner, on synthetic data (32 stations, 10,752 hourly readings). Details in [`reports/weather/RESULTS.md`](reports/weather/RESULTS.md) (in French).
+
+**7 anomalies that dbt tests catch** (35 runs per reasoner)
+
+| Metric | Rules | Hybrid (rules, then LLM) | LLM only |
+|---|---|---|---|
+| Correct diagnosis (category) | 100% | 100% | 100% |
+| Incidents resolved (tests green, data exact) | 71% | **86%** | 46% |
+| Automation rate | 71% | 71% | 37% |
+| Fixes accepted by the reviewer | 71% | 75% | 70% |
+| Proposals blocked by the guardrails | 0 | 9 | 43 |
+| Latency per incident, median / p90 | 3.0 s / 3.1 s | 3.0 s / 45 s | 56 s / 81 s |
+
+**3 anomalies no dbt test catches** (15 runs per reasoner)
+
+| Metric | Rules | Hybrid (rules, then LLM) | LLM only |
+|---|---|---|---|
+| Anomaly spotted by the profiler | 100% | 100% | 100% |
+| Proposed tests accepted by the reviewer | 100% | 100% | 100% |
+| Correct outcome (repaired, or alerted if irreparable) | 67% | 67% | 40% |
+| Automation rate | 67% | 40% | 7% |
+| Median end-to-end time | 6.8 s | 36 s | 68 s |
+
+<details>
+<summary>Per-scenario details</summary>
+
+| Scenario | Rules: diagnosis · resolved | Hybrid: diagnosis · resolved | LLM only: diagnosis · resolved |
+|---|---|---|---|
+| `missing_station_code` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 3/5 |
+| `missing_fahrenheit` | 5/5 · 0/5 | 5/5 · 4/5 | 5/5 · 1/5 |
+| `duplicate_readings` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `pressure_sentinel` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `schema_drift_rename` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 1/5 |
+| `observation_date_shift` | 5/5 · 0/5 | 5/5 · 1/5 | 5/5 · 1/5 |
+| `lowercase_station_codes` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 0/5 |
+
+| Scenario | Rules: spotted · correct outcome | Hybrid: spotted · correct outcome | LLM only: spotted · correct outcome |
+|---|---|---|---|
+| `sensor_model_lowercase` | 5/5 · 0/5 | 5/5 · 0/5 | 5/5 · 1/5 |
+| `future_readings` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 0/5 |
+| `station_outage` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+
+</details>
+
+**Key takeaways**
+
+- **The same trends as on flights, without touching the agent's code.** The hybrid reasoner resolves the most incidents: 86%, against 71% for the rules and 46% for the LLM alone. The LLM takes over when the generic rule fails, for instance to recompute `temperature_f` from `temperature_c` thanks to the column description (4/5 vs 0/5).
+- **The same weak spots too.** `observation_date_shift` is repaired only once in 5 by the hybrid. For `sensor_model_lowercase`, the new test is accepted 15 times out of 15, but upper-casing only succeeds once in 15. On the station outage, the hybrid hands over to the LLM, which proposes up to 3 rejected tests before raising the same alert as the rules (automation 40% vs 67%).
+- **PostgreSQL.** The same project rerun on PostgreSQL gives exactly the same outcomes as on DuckDB for all 50 runs of the rule-based reasoner (median latency per incident: 2.9 s, against 3.0 s on DuckDB).
+- **Take the LLM-only timings with caution**: part of its evaluation ran while other jobs were using the machine.
 <!-- RESULTS:END -->
 
 ---
