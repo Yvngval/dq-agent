@@ -29,6 +29,8 @@ def test_allowed_statements(sql, kind):
         ("DELETE FROM raw.flights WHERE day IS NULL; DROP TABLE raw.flights", "Une seule instruction"),
         ("ALTER TABLE raw.flights DROP COLUMN day", "RENAME COLUMN"),
         ("UPDATE raw.flights SET day = a.x FROM raw.airports a WHERE true", "jointures"),
+        # Guillemets cassés produits par le LLM local pendant une évaluation : refusés, pas de plantage.
+        ("UPDATE raw.flights SET day = 'NULL' AND 'expression' WHERE day IS NUL'", "SQL invalide"),
     ],
 )
 def test_rejected_statements(sql, reason):

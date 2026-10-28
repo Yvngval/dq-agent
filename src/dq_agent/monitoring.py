@@ -52,7 +52,7 @@ def validate_test(condition: str, table: str) -> TestValidation:
         return TestValidation(False, ["Condition vide."])
     try:
         tree = sqlglot.parse_one(f"SELECT 1 FROM {table} WHERE {condition}", read="duckdb")
-    except sqlglot.errors.ParseError as e:
+    except sqlglot.errors.SqlglotError as e:
         return TestValidation(False, [f"Condition SQL invalide : {e}"])
     if not isinstance(tree, exp.Select) or tree.find(exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create):
         return TestValidation(False, ["La condition doit être une simple expression booléenne."])

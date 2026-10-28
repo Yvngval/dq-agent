@@ -70,7 +70,7 @@ def to_raw(sql: str, aliases: dict[str, str], raw_columns: set[str]) -> str:
         return sql
     try:
         tree = sqlglot.parse_one(sql, read="duckdb")
-    except sqlglot.errors.ParseError:
+    except sqlglot.errors.SqlglotError:
         return sql
 
     def swap(node):

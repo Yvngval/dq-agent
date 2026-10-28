@@ -3,7 +3,7 @@ export PYTHONPATH := $(CURDIR)/src
 RUN := uv run --no-sync
 
 .PHONY: setup data ingest synthetic check profile demo run evaluate report test lint graph mcp \
-	weather weather-demo weather-evaluate weather-postgres weather-postgres-evaluate
+	weather weather-demo weather-evaluate weather-postgres weather-postgres-evaluate init-demo
 
 # Second jeu de données : le même agent pointé sur un autre projet dbt (stations météo synthétiques).
 WEATHER := DQ_DBT_DIR=$(CURDIR)/examples/weather/dbt DQ_DATA_DIR=$(CURDIR)/examples/weather/data \
@@ -82,3 +82,8 @@ weather-postgres: ## Météo sur PostgreSQL : génère les relevés dans la base
 weather-postgres-evaluate: ## Météo sur PostgreSQL : évaluation des 10 scénarios (règles)
 	$(WEATHER_PG) $(RUN) dq evaluate --provider rules --seeds 5 --out reports/weather/postgres/results_rules.jsonl
 	$(RUN) dq report reports/weather/postgres/results_rules.jsonl --out reports/weather/postgres/RESULTS.md
+
+init-demo:        ## dq init sur les relevés météo exportés en CSV : l'agent propose des règles, tu valides
+	$(RUN) python examples/weather/generate.py --csv projects/csv
+	$(RUN) dq init projects/csv/stations.csv projects/csv/readings.csv --dir projects/weather-init --force \
+		--domain "hourly weather observations from automatic stations"

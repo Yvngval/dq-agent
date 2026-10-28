@@ -61,6 +61,52 @@ def baseline() -> None:
 
 
 @app.command()
+def init(
+    files: list[Path] = typer.Argument(..., exists=True, dir_okay=False, help="Fichiers CSV, Parquet ou JSON."),
+    directory: Path = typer.Option(None, "--dir", help="Dossier du projet créé (défaut : projects/<fichier>)."),
+    domain: str = typer.Option(None, help="Description du domaine des données, donnée au LLM."),
+    yes: bool = typer.Option(False, "--yes", help="Accepter d'office les règles vraies sur toutes les lignes."),
+    force: bool = typer.Option(False, help="Remplacer un projet déjà créé par `dq init`."),
+) -> None:
+    """Crée un projet surveillé à partir de fichiers : l'agent propose des règles, tu les valides."""
+    import shutil
+
+    from dq_agent import bootstrap, discovery
+    from dq_agent.warehouse import connect
+
+    files = [f.resolve() for f in files]
+    directory = (directory or settings().root / "projects" / bootstrap.slug(files[0].name.split(".")[0])).resolve()
+    if directory.exists() and any(directory.iterdir()):
+        if not (force and (directory / "dq.env").exists()):
+            console.print(f"[red]{directory} n'est pas vide[/] (--force remplace un projet créé par `dq init`).")
+            raise typer.Exit(1)
+        shutil.rmtree(directory)
+    domain = domain or f"data loaded from {', '.join(f.name for f in files)}"
+    with bootstrap.use_project(directory):
+        tables = bootstrap.load_files(files)
+        with connect(read_only=True) as con:
+            rules = discovery.discover(con, tables)
+        exact = sum(r.exact for r in rules)
+        console.print(
+            f"{', '.join(tables)} chargée(s). {len(rules)} règles candidates, "
+            f"dont {exact} vraies sur toutes les lignes."
+        )
+        accepted = bootstrap.review_rules(rules, console, accept_exact=yes)
+        bootstrap.write_project(directory, tables, accepted, domain, files, reviewed=not yes)
+        console.print(f"Projet dbt écrit dans {directory} : {len(accepted)} règle(s) acceptée(s) sur {len(rules)}.")
+        result = dbt_runner.build()
+        if result.failures:
+            console.print(
+                f"[yellow]{len(result.failures)} test(s) en échec[/] : des lignes violent des règles acceptées. "
+                "L'agent peut les réparer (`dq run`), puis `dq baseline` enregistrera la référence propre."
+            )
+        else:
+            reference.save()
+            console.print(f"[green]dbt build : {result.counts}[/] ; référence propre enregistrée.")
+    console.print(f"Pour surveiller ce projet : [bold]source {directory / 'dq.env'}[/], puis [bold]dq run[/].")
+
+
+@app.command()
 def check() -> None:
     """Lance `dbt build` et affiche les échecs."""
     result = dbt_runner.build()

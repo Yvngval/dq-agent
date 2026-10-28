@@ -4,6 +4,8 @@ Il sert à montrer que l'agent ne dépend pas du domaine aérien : autre schéma
 autres pannes. Écrit dans l'entrepôt désigné par DQ_DATA_DIR / DQ_DUCKDB_PATH, ou DQ_WAREHOUSE (PostgreSQL) :
 
     DQ_DATA_DIR=examples/weather/data PYTHONPATH=src uv run python examples/weather/generate.py
+
+Avec --csv DOSSIER, écrit plutôt stations.csv et readings.csv, pour essayer `dq init` sur des fichiers.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import argparse
 import datetime as dt
 import math
 import random
+from pathlib import Path
 
 from dq_agent.warehouse import connect, replace_table
 
@@ -38,7 +41,9 @@ SENSORS = ["VAISALA-WXT536", "CAMPBELL-CS215", "DAVIS-VP2", "LUFFT-WS600"]
 START = dt.datetime(2025, 3, 1)
 
 
-def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict[str, int]:
+def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11, path: Path | None = None) -> dict[str, int]:
+    """Écrit les tables raw dans l'entrepôt configuré, ou dans le fichier DuckDB `path`."""
+    kind = "duckdb" if path else None
     rng = random.Random(seed)
     stations, readings = [], []
     for city, country, lat, lon, elevation, base in CITIES:
@@ -63,7 +68,7 @@ def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict
                     readings.append(
                         (code, START + dt.timedelta(days=d, hours=h), temp, humidity, pressure, wind, rain, sensor)
                     )
-    with connect() as con:
+    with connect(path) as con:
         con.execute("CREATE SCHEMA IF NOT EXISTS raw")
         # Tables temporaires côté DuckDB, puis copie dans la base surveillée (DuckDB, PostgreSQL...).
         con.execute(
@@ -74,7 +79,7 @@ def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict
             "INSERT INTO temp.landed_stations VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(i + 1, *s) for i, s in enumerate(stations)],
         )
-        replace_table(con, "raw.stations", "SELECT * FROM temp.landed_stations")
+        replace_table(con, "raw.stations", "SELECT * FROM temp.landed_stations", kind)
         con.execute(
             "CREATE OR REPLACE TEMP TABLE landed (station_code VARCHAR, observed_at TIMESTAMP, temperature_c DOUBLE, "
             "humidity_pct DOUBLE, pressure_hpa DOUBLE, wind_speed_kmh DOUBLE, precipitation_mm DOUBLE, "
@@ -95,6 +100,7 @@ def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict
                    round(temperature_c * 9 / 5 + 32, 1) AS temperature_f,
                    humidity_pct, pressure_hpa, wind_speed_kmh, precipitation_mm, sensor_model
             FROM temp.landed""",
+            kind,
         )
         return {
             "raw.stations": con.execute("SELECT count(*) FROM raw.stations").fetchone()[0],
@@ -102,9 +108,29 @@ def generate(days: int = 14, stations_per_city: int = 2, seed: int = 11) -> dict
         }
 
 
+def export_csv(directory: Path, days: int = 14, seed: int = 11) -> list[Path]:
+    """Écrit les deux tables en CSV (sans `_row_id`), comme un export reçu d'un fournisseur."""
+    directory.mkdir(parents=True, exist_ok=True)
+    scratch = directory / ".generate.duckdb"
+    generate(days=days, seed=seed, path=scratch)
+    files = []
+    with connect(scratch) as con:
+        for name in ("stations", "readings"):
+            target = directory / f"{name}.csv"
+            quoted = "'" + str(target).replace("'", "''") + "'"
+            con.execute(f"COPY (SELECT * EXCLUDE (_row_id) FROM raw.{name} ORDER BY _row_id) TO {quoted} (HEADER)")
+            files.append(target)
+    scratch.unlink()
+    return files
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--days", type=int, default=14)
     parser.add_argument("--seed", type=int, default=11)
+    parser.add_argument("--csv", type=Path, help="Dossier où écrire stations.csv et readings.csv.")
     args = parser.parse_args()
-    print(generate(days=args.days, seed=args.seed))
+    if args.csv:
+        print([str(f) for f in export_csv(args.csv, days=args.days, seed=args.seed)])
+    else:
+        print(generate(days=args.days, seed=args.seed))

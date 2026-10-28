@@ -18,8 +18,12 @@ dbt/dbt_packages/
 examples/*/dbt/target/
 examples/*/dbt/logs/
 examples/*/dbt/.user.yml
+# Tests générés pendant les évaluations (dans un vrai projet, on les relit puis on les versionne)
+dbt/tests/generated/
+examples/*/dbt/tests/generated/
+# Projets créés par `dq init`
+projects/
 logs/
-reports/eval_run.log
-reports/weather/eval_run.log
+reports/**/eval_run*.log
 reports/weather/ci_results.jsonl
 dbt/.user.yml

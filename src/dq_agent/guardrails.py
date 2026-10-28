@@ -54,7 +54,7 @@ def parse_fix(sql: str) -> ParsedFix:
         raise FixRejected("Requête vide.")
     try:
         statements = [s for s in sqlglot.parse(sql, read="duckdb") if s is not None]
-    except sqlglot.errors.ParseError as e:
+    except sqlglot.errors.SqlglotError as e:
         raise FixRejected(f"SQL invalide : {e}") from e
     if len(statements) != 1:
         raise FixRejected("Une seule instruction SQL est autorisée.")

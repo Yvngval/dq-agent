@@ -301,7 +301,7 @@ def staging_expressions(manifest: dict | None = None) -> dict[str, str]:
         sql = re.sub(r"\{\{.*?\}\}", "source_table", node.get("raw_code") or "", flags=re.DOTALL)
         try:
             tree = sqlglot.parse_one(sql, read="duckdb")
-        except sqlglot.errors.ParseError:
+        except sqlglot.errors.SqlglotError:
             continue
         for e in tree.expressions:
             if isinstance(e, exp.Alias) and not (isinstance(e.this, exp.Column) and e.this.name == e.alias):

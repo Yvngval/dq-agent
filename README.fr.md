@@ -24,6 +24,7 @@ Un pipeline de données casse rarement en silence : un fichier arrive avec une c
   <a href="#données">Données</a> ·
   <a href="#démarrage">Démarrage</a> ·
   <a href="#serveur-mcp">Serveur MCP</a> ·
+  <a href="#partir-de-ses-propres-fichiers--dq-init">dq init</a> ·
   <a href="#bases-de-données">Bases de données</a> ·
   <a href="#utiliser-lagent-sur-un-autre-projet-dbt">Autre projet dbt</a>
 </p>
@@ -286,6 +287,7 @@ Sans téléchargement ni LLM : `make synthetic`, puis `PYTHONPATH=src uv run dq 
 
 | Commande | Rôle |
 |---|---|
+| `dq init <fichiers> [--yes]` | Crée un projet surveillé à partir de fichiers ; l'agent propose des règles, tu valides |
 | `dq baseline` | Enregistre l'état actuel des sources comme référence propre (copie et profil statistique) |
 | `dq inject --list` | Liste les scénarios du jeu évalué ; `dq inject <scénario> --seed N` en injecte un |
 | `dq reset` | Restaure les sources depuis la référence |
@@ -309,6 +311,46 @@ Pour Claude : copier `.env.example` en `.env`, mettre `DQ_LLM_PROVIDER=anthropic
 {"mcpServers": {"dq-agent": {"command": "uv", "args": ["run", "--directory", "/chemin/vers/dq-agent", "dq", "mcp"],
                              "env": {"PYTHONPATH": "/chemin/vers/dq-agent/src"}}}}
 ```
+
+---
+
+## Partir de ses propres fichiers : `dq init`
+
+Pas encore de projet dbt ? `dq init` part de fichiers CSV, Parquet ou JSON. L'agent charge chaque fichier dans une table DuckDB, cherche dans les données des **règles candidates** et te les propose une par une : c'est toi qui décides. Les règles acceptées deviennent des tests dbt, et leur texte devient la documentation des colonnes, que le LLM lit ensuite pour diagnostiquer et réparer.
+
+<p align="center">
+  <img src="docs/init.svg" alt="dq init : l'agent propose la formule de temperature_f (vraie pour 99,97 % des lignes, 3 lignes la violent), le lien entre obs_date et observed_at et la clé station_code ; l'humain accepte" width="820">
+</p>
+
+| Règle cherchée | Trouvée sur les relevés météo |
+|---|---|
+| valeur jamais vide, identifiant unique | `reading_id` |
+| liste de valeurs autorisées (peu de valeurs distinctes) | `sensor_model` : 4 modèles |
+| jamais négatif, toujours en majuscules | `wind_speed_kmh`, `station_code` |
+| date égale au jour d'un horodatage | `obs_date` = `CAST(observed_at AS DATE)` |
+| colonne calculée à partir d'une autre | `temperature_f` = `round(temperature_c * 1.8 + 32, 1)` |
+| valeur présente dans la clé d'une autre table | `station_code` existe dans `stations` |
+| une date jamais antérieure à une autre | aucune ici |
+
+Une règle respectée par au moins 99 % des lignes est aussi proposée, avec le nombre de lignes qui la violent : si tu l'acceptes, ces lignes sont sans doute des erreurs, et `dq run` les fera réparer. La décision reste humaine pour une bonne raison : sur ces relevés, l'agent propose aussi « la latitude n'est jamais négative » ou « la température en Fahrenheit n'est jamais négative », vraies dans ces données de mars en Europe, mais pas des règles du métier.
+
+```bash
+uv run python examples/weather/generate.py --csv projects/csv    # deux fichiers CSV
+uv run dq init projects/csv/stations.csv projects/csv/readings.csv --dir projects/weather-init
+source projects/weather-init/dq.env && uv run dq run --provider hybrid
+```
+
+`make init-demo` fait les deux premières étapes ; `--yes` accepte d'office les règles vraies sur toutes les lignes. Le projet créé est un projet dbt ordinaire (sources documentées, modèles staging avec leur lignage, tests), à relire et à compléter.
+
+**Mesure.** Le projet généré à partir des deux fichiers CSV avec `--yes` (les 34 règles exactes acceptées d'office, sans aucune retouche) a été soumis aux 10 mêmes pannes que le projet météo écrit à la main, 50 exécutions par raisonneur. Mesuré le 28/10/2026, détail dans [`reports/weather/init/RESULTS.md`](reports/weather/init/RESULTS.md).
+
+| Bonne issue sur les 10 pannes (réparée, ou alerte si irréparable) | Règles | Hybride |
+|---|---|---|
+| Projet écrit à la main (`examples/weather`) | 70 % | 80 % |
+| Projet généré par `dq init`, sans retouche | 60 % | 76 % |
+
+- **Ce qui lui manque** : `dq init` ne propose pas de bornes plausibles, seulement « jamais négatif ». Une pression à 9 999,9 hPa passe donc tous ses tests (`pressure_sentinel` : 0 sur 5), alors que le projet écrit à la main borne la pression entre 870 et 1 085 hPa. C'est le genre de règle qu'un humain ajoute en relisant le projet.
+- **Ce qu'il apporte** : la règle « toujours en majuscules » sur `sensor_model` fait détecter la panne par dbt, et sa description guide le LLM. L'hybride répare ainsi `sensor_model_lowercase` 4 fois sur 5, contre 0 fois sur 5 dans le projet écrit à la main, qui n'avait aucun test sur cette colonne.
 
 ---
 
@@ -369,6 +411,8 @@ examples/weather/       second projet dbt (stations météo) : générateur, pro
 src/dq_agent/
   ingest.py             chargement OpenSky + OurAirports, pseudonymisation, certification
   reference.py          référence propre des sources dbt (copie et profil), restauration
+  discovery.py          découverte de règles candidates dans les données (`dq init`)
+  bootstrap.py          `dq init` : chargement des fichiers, validation des règles, projet dbt généré
   anomalies.py          outils d'injection, scénarios sur les vols et leur vérité terrain
   dbt_runner.py         dbt build, lecture de run_results.json, du lignage et du graphe dbt
   context.py            outils de contexte en lecture seule

@@ -11,6 +11,7 @@ et DuckDB n'accepte qu'un seul processus écrivain à la fois sur un fichier.
 from __future__ import annotations
 
 import getpass
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -93,6 +94,22 @@ def _attach(con: duckdb.DuckDBPyConnection, wh: Warehouse, read_only: bool) -> N
     con.execute(f'USE "{wh.database}"')
 
 
+def _open(db_path: Path, read_only: bool, attempts: int = 6) -> duckdb.DuckDBPyConnection:
+    """Ouvre le fichier DuckDB, en réessayant si un autre processus garde brièvement le verrou.
+
+    dbt vient parfois de refermer le fichier, et un dossier synchronisé (iCloud Drive...) peut le
+    verrouiller un instant juste après une écriture.
+    """
+    for attempt in range(attempts):
+        try:
+            return duckdb.connect(str(db_path), read_only=read_only)
+        except duckdb.IOException as e:
+            if "lock" not in str(e).lower() or attempt == attempts - 1:
+                raise
+            time.sleep(0.2 * 2**attempt)
+    raise AssertionError("inaccessible")
+
+
 @contextmanager
 def connect(path: Path | None = None, read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
     wh = warehouse()
@@ -102,7 +119,7 @@ def connect(path: Path | None = None, read_only: bool = False) -> Iterator[duckd
     else:
         db_path = Path(path or settings().duckdb_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        con = duckdb.connect(str(db_path), read_only=read_only)
+        con = _open(db_path, read_only)
     try:
         if attached:
             _attach(con, wh, read_only)
@@ -112,14 +129,14 @@ def connect(path: Path | None = None, read_only: bool = False) -> Iterator[duckd
         con.close()
 
 
-def replace_table(con: duckdb.DuckDBPyConnection, table: str, select_sql: str) -> None:
-    """Remplace une table par le résultat d'une requête.
+def replace_table(con: duckdb.DuckDBPyConnection, table: str, select_sql: str, kind: str | None = None) -> None:
+    """Remplace une table par le résultat d'une requête (`kind` : base de la connexion, défaut DQ_WAREHOUSE).
 
     PostgreSQL refuse de supprimer une table dont dépendent des vues (les modèles staging de dbt) :
     on la supprime en cascade, et le prochain `dbt build` recrée les vues.
     """
     wh = warehouse()
-    if wh.kind == "postgres":
+    if (kind or wh.kind) == "postgres":
         con.execute("CALL postgres_execute(?, ?)", [wh.database, f"DROP TABLE IF EXISTS {table} CASCADE"])
         con.execute("CALL postgres_clear_cache()")  # sinon DuckDB croit la table encore là et la recopie à vide
         con.execute(f"CREATE TABLE {table} AS {select_sql}")
