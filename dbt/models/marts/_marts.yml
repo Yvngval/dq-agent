@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: fct_flights
+    description: Flights enriched with origin and destination countries.
+    columns:
+      - name: flight_id
+        data_tests: [unique, not_null]
+      - name: route_scope
+        data_tests:
+          - accepted_values:
+              arguments: {values: [domestic, international, unknown]}
+
+  - name: mart_airport_daily_traffic
+    description: Daily departures and arrivals per French airport.
+    data_tests:
+      - unique_combination:
+          arguments: {combination: [airport_icao, flight_date]}
+    columns:
+      - name: airport_icao
+        data_tests: [not_null]
+      - name: flight_date
+        data_tests: [not_null]
+      - name: movements
+        data_tests:
+          - in_range: {arguments: {min_value: 1}}

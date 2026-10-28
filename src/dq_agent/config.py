@@ -1,0 +1,65 @@
+"""Chemins et réglages du projet, lus depuis l'environnement (et un fichier .env optionnel)."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env")
+
+
+@dataclass(frozen=True)
+class Settings:
+    root: Path = ROOT
+    data_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_DATA_DIR", ROOT / "data")))
+    dbt_dir: Path = ROOT / "dbt"
+    logs_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_LOGS_DIR", ROOT / "logs")))
+
+    llm_provider: str = field(default_factory=lambda: os.getenv("DQ_LLM_PROVIDER", "ollama"))
+    ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+    ollama_model: str = field(default_factory=lambda: os.getenv("DQ_OLLAMA_MODEL", "qwen2.5-coder:7b"))
+    anthropic_model: str = field(default_factory=lambda: os.getenv("DQ_ANTHROPIC_MODEL", "claude-opus-5-5"))
+    anthropic_effort: str = field(default_factory=lambda: os.getenv("DQ_ANTHROPIC_EFFORT", "low"))
+
+    # Garde-fous appliqués à toute correction proposée par l'agent.
+    max_affected_fraction: float = field(default_factory=lambda: float(os.getenv("DQ_MAX_AFFECTED_FRACTION", "0.10")))
+    max_attempts: int = field(default_factory=lambda: int(os.getenv("DQ_MAX_ATTEMPTS", "3")))
+    max_iterations: int = field(default_factory=lambda: int(os.getenv("DQ_MAX_ITERATIONS", "8")))
+
+    @property
+    def duckdb_path(self) -> Path:
+        return Path(os.getenv("DQ_DUCKDB_PATH", self.data_dir / "warehouse.duckdb"))
+
+    @property
+    def dbt_target(self) -> Path:
+        return Path(os.getenv("DQ_DBT_TARGET", self.dbt_dir / "target"))
+
+    @property
+    def raw_dir(self) -> Path:
+        return self.data_dir / "raw"
+
+    @property
+    def decisions_log(self) -> Path:
+        return self.logs_dir / "decisions.jsonl"
+
+    @property
+    def checkpoints_path(self) -> Path:
+        return self.data_dir / "checkpoints.sqlite"
+
+
+@lru_cache
+def settings() -> Settings:
+    return Settings()
+
+
+@lru_cache
+def quality_vars() -> dict:
+    """Seuils de qualité partagés entre dbt (vars) et Python : une seule source de vérité."""
+    project = yaml.safe_load((ROOT / "dbt" / "dbt_project.yml").read_text())
+    return project["vars"]

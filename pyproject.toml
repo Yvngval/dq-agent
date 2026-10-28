@@ -1,0 +1,44 @@
+[project]
+name = "dq-agent"
+version = "0.1.0"
+description = "Agent IA LangGraph qui détecte, diagnostique et corrige les problèmes de qualité de données d'un pipeline dbt + DuckDB, avec validation humaine."
+authors = [
+    { name = "Yvngval", email = "ponnoussamy93@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=2.3.0",
+    "dbt-core>=1.12.6",
+    "dbt-duckdb>=1.11.1",
+    "duckdb>=2.0.0",
+    "httpx>=0.28.1",
+    "langgraph>=1.2.18",
+    "langgraph-checkpoint-sqlite>=3.1.2",
+    "pydantic>=2.14.1",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "sqlglot>=30.25.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+dq = "dq_agent.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.10.10,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

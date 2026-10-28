@@ -1,0 +1,20 @@
+# Environnement
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+
+# Données : la licence OpenSky interdit leur redistribution
+data/
+*.duckdb
+*.duckdb.wal
+
+# Artefacts dbt et journaux d'exécution (peuvent contenir des lignes de données)
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/
+reports/eval_run.log
+dbt/.user.yml

@@ -1,0 +1,32 @@
+name: dq_flights
+version: "0.1.0"
+config-version: 2
+profile: dq_flights
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Seuils de qualité : lus aussi par Python (dq_agent.config.quality_vars).
+vars:
+  altitude_min_m: -500
+  altitude_max_m: 16000
+  duration_min_min: 1
+  duration_max_min: 1200
+  airport_types: [large_airport, medium_airport, small_airport, heliport, seaplane_base, balloonport, closed]
+
+models:
+  dq_flights:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+data_tests:
+  dq_flights:
+    +store_failures: true
+    +schema: test_failures

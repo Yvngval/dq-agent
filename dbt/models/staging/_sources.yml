@@ -1,0 +1,85 @@
+version: 2
+
+# Contrat de la zone d'atterrissage : ce que le pipeline attend des fichiers sources.
+sources:
+  - name: raw
+    schema: raw
+    description: Landing zone, loaded by `dq ingest` from the OpenSky flight list and OurAirports.
+    tables:
+      - name: flights
+        description: >
+          One row per flight seen by the OpenSky Network (April 2020, flights touching a
+          French airport). Aircraft identifiers are pseudonymised at ingestion.
+        columns:
+          - name: _row_id
+            data_type: BIGINT
+            description: "Technical row id assigned at load time."
+          - name: callsign
+            data_type: VARCHAR
+            description: "ATC callsign (airline ICAO code + flight number), pseudonymised for private flights."
+          - name: icao24
+            data_type: VARCHAR
+            description: "Pseudonymised transponder id of the aircraft. Not recoverable from other columns."
+          - name: typecode
+            data_type: VARCHAR
+            description: "ICAO aircraft type (e.g. A320). Often NULL, which is normal."
+          - name: origin
+            data_type: VARCHAR
+            description: "ICAO code (4 upper-case letters) of the departure airport. NULL when unknown, which is normal."
+          - name: destination
+            data_type: VARCHAR
+            description: "ICAO code (4 upper-case letters) of the arrival airport. NULL when unknown, which is normal."
+          - name: firstseen
+            data_type: TIMESTAMP
+            description: "UTC timestamp of the first message received for the flight."
+          - name: lastseen
+            data_type: TIMESTAMP
+            description: "UTC timestamp of the last message received for the flight."
+          - name: day
+            data_type: DATE
+            description: "UTC day of the last message received, i.e. always CAST(lastseen AS DATE)."
+          - name: latitude_1
+            data_type: DOUBLE
+            description: "Latitude (degrees) at first message."
+          - name: longitude_1
+            data_type: DOUBLE
+            description: "Longitude (degrees) at first message."
+          - name: altitude_1
+            data_type: DOUBLE
+            description: "Barometric altitude (metres) at first message."
+          - name: latitude_2
+            data_type: DOUBLE
+            description: "Latitude (degrees) at last message."
+          - name: longitude_2
+            data_type: DOUBLE
+            description: "Longitude (degrees) at last message."
+          - name: altitude_2
+            data_type: DOUBLE
+            description: "Barometric altitude (metres) at last message. May be NULL."
+      - name: airports
+        description: OurAirports reference table (public domain).
+        columns:
+          - name: ident
+            data_type: VARCHAR
+            description: "ICAO-style airport code, upper case."
+          - name: type
+            data_type: VARCHAR
+            description: "Airport category."
+          - name: name
+            data_type: VARCHAR
+            description: "Airport name."
+          - name: iso_country
+            data_type: VARCHAR
+            description: "ISO 3166-1 alpha-2 country code."
+          - name: municipality
+            data_type: VARCHAR
+            description: "City served."
+          - name: latitude_deg
+            data_type: DOUBLE
+            description: "Latitude (degrees)."
+          - name: longitude_deg
+            data_type: DOUBLE
+            description: "Longitude (degrees)."
+          - name: elevation_ft
+            data_type: BIGINT
+            description: "Elevation (feet)."

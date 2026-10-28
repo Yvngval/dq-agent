@@ -1,0 +1,85 @@
+version: 2
+
+# meta.source_columns : lignage colonne par colonne vers la zone raw, utilisé par l'agent.
+models:
+  - name: stg_flights
+    description: Typed and renamed flights. One row per flight.
+    columns:
+      - name: _row_id
+        meta: {source_table: raw.flights, source_columns: [_row_id]}
+      - name: flight_id
+        description: Business key of a flight, md5(icao24 | firstseen).
+        meta: {source_table: raw.flights, source_columns: [icao24, firstseen]}
+        data_tests: [not_null, unique]
+      - name: aircraft_id
+        description: Pseudonymised aircraft id.
+        meta: {source_table: raw.flights, source_columns: [icao24]}
+        data_tests: [not_null]
+      - name: origin_icao
+        meta: {source_table: raw.flights, source_columns: [origin]}
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_airports'), field: airport_icao}
+      - name: destination_icao
+        meta: {source_table: raw.flights, source_columns: [destination]}
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_airports'), field: airport_icao}
+      - name: first_seen_at
+        meta: {source_table: raw.flights, source_columns: [firstseen]}
+        data_tests: [not_null]
+      - name: last_seen_at
+        meta: {source_table: raw.flights, source_columns: [lastseen]}
+        data_tests: [not_null]
+      - name: flight_date
+        description: UTC day of the last message, always equal to CAST(last_seen_at AS DATE).
+        meta: {source_table: raw.flights, source_columns: [day]}
+        data_tests: [not_null]
+      - name: duration_min
+        description: Minutes between first and last message.
+        meta: {source_table: raw.flights, source_columns: [firstseen, lastseen]}
+        data_tests:
+          - in_range:
+              arguments: {min_value: "{{ var('duration_min_min') }}", max_value: "{{ var('duration_max_min') }}"}
+      - name: first_latitude
+        meta: {source_table: raw.flights, source_columns: [latitude_1]}
+        data_tests:
+          - in_range: {arguments: {min_value: -90, max_value: 90}}
+      - name: first_longitude
+        meta: {source_table: raw.flights, source_columns: [longitude_1]}
+        data_tests:
+          - in_range: {arguments: {min_value: -180, max_value: 180}}
+      - name: first_altitude_m
+        meta: {source_table: raw.flights, source_columns: [altitude_1]}
+        data_tests:
+          - in_range:
+              arguments: {min_value: "{{ var('altitude_min_m') }}", max_value: "{{ var('altitude_max_m') }}"}
+      - name: last_latitude
+        meta: {source_table: raw.flights, source_columns: [latitude_2]}
+        data_tests:
+          - in_range: {arguments: {min_value: -90, max_value: 90}}
+      - name: last_longitude
+        meta: {source_table: raw.flights, source_columns: [longitude_2]}
+        data_tests:
+          - in_range: {arguments: {min_value: -180, max_value: 180}}
+      - name: last_altitude_m
+        meta: {source_table: raw.flights, source_columns: [altitude_2]}
+        data_tests:
+          - in_range:
+              arguments: {min_value: "{{ var('altitude_min_m') }}", max_value: "{{ var('altitude_max_m') }}"}
+
+  - name: stg_airports
+    description: Airport reference data.
+    columns:
+      - name: airport_icao
+        meta: {source_table: raw.airports, source_columns: [ident]}
+        data_tests: [not_null, unique]
+      - name: airport_type
+        meta: {source_table: raw.airports, source_columns: [type]}
+        data_tests:
+          - accepted_values:
+              arguments: {values: "{{ var('airport_types') }}"}
+      - name: latitude
+        meta: {source_table: raw.airports, source_columns: [latitude_deg]}
+        data_tests:
+          - in_range: {arguments: {min_value: -90, max_value: 90}}

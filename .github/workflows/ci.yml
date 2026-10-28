@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
+      DQ_LLM_PROVIDER: rules
+      DQ_DUCKDB_PATH: ${{ github.workspace }}/data/warehouse.duckdb
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run --no-sync ruff check src tests
+
+      - name: Tests (pytest, sur données synthétiques)
+        run: uv run --no-sync pytest -q
+
+      # Les données OpenSky ne sont pas redistribuables : la CI utilise des vols synthétiques.
+      - name: dbt build et dbt test sur données synthétiques
+        run: |
+          uv run --no-sync dq ingest --synthetic
+          uv run --no-sync dbt build --project-dir dbt --profiles-dir dbt
+          uv run --no-sync dbt test --project-dir dbt --profiles-dir dbt
+
+      - name: Agent de bout en bout (raisonneur à base de règles)
+        run: |
+          uv run --no-sync dq inject duplicate_rows --seed 1
+          uv run --no-sync dq evaluate --provider rules --seeds 1 --scenario duplicate_rows --scenario schema_drift_rename
