@@ -86,6 +86,10 @@ flowchart LR
 10. **Findings.** When every test passes, it compares the current data with that profile: volume, NULL increase, out-of-range values, new case or length, new categories, and an excess of unusual combinations (more than 4 standard deviations above chance). On clean data it reports nothing.
 11. **New test.** The agent turns a finding into a dbt test (a SQL condition selecting the faulty rows), measures it on today's data and on the validated history, and shows it to the human, who adds, rejects, edits it or turns it into an alert. An accepted test is written to `dbt/tests/generated/`, then the repair loop takes over. Findings that cannot become a row-level rule (volume, NULL rate, unusual combinations) become **alerts** for a human.
 
+<p align="center">
+  <img src="docs/new_test.svg" alt="New dbt test proposed after a profiler finding: SQL condition, rows flagged today and in the history" width="820">
+</p>
+
 **Three interchangeable reasoners.** `rules` applies one generic remediation per test type (no-LLM baseline, used by CI); `ollama` uses a local LLM (default `qwen2.5-coder:7b`, no data leaves the machine); `hybrid` tries the rule first, then hands over to the LLM if the rule is rejected or missing. Claude is available through the API (`anthropic`, `hybrid:anthropic`, model `claude-opus-5-5`).
 
 ---

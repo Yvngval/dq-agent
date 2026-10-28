@@ -86,6 +86,10 @@ flowchart LR
 10. **Constats.** Quand tous les tests passent, il compare les données actuelles à ce profil : volume, hausse des NULL, valeurs hors plage, nouvelle casse ou longueur, nouvelles catégories, et excès de combinaisons inhabituelles (plus de 4 écarts-types au-dessus du hasard). Sur les données propres, il ne signale rien.
 11. **Nouveau test.** L'agent transforme un constat en test dbt (une condition SQL qui sélectionne les lignes fautives). Avant de la montrer, il la mesure sur les données actuelles et sur l'historique validé. L'humain l'ajoute, la rejette, la modifie ou en fait une alerte. Un test accepté est écrit dans `dbt/tests/generated/`, puis la boucle de correction prend le relais. Les constats qui ne peuvent pas devenir une règle ligne par ligne (volume, taux de NULL, combinaisons inhabituelles) deviennent des **alertes** pour un humain.
 
+<p align="center">
+  <img src="docs/new_test.svg" alt="Proposition d'un nouveau test dbt après un constat du profileur : condition SQL, lignes signalées aujourd'hui et dans l'historique" width="820">
+</p>
+
 **Trois raisonneurs, interchangeables.** `rules` applique une remédiation générique par type de test (référence sans LLM, utilisée par la CI) ; `ollama` utilise un LLM local (par défaut `qwen2.5-coder:7b`, aucune donnée ne sort de la machine) ; `hybrid` essaie d'abord la règle, puis passe la main au LLM si la règle est refusée ou absente. Claude est disponible par l'API (`anthropic`, `hybrid:anthropic`, modèle `claude-opus-5-5`).
 
 ---
