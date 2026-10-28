@@ -177,6 +177,16 @@ CATEGORY_BY_TEST = {
 }
 
 
+# Tests générés par la boucle de surveillance : leur nom contient le type de constat.
+CATEGORY_BY_FINDING = {
+    "out_of_range": "outliers",
+    "case_drift": "format_inconsistency",
+    "length_drift": "format_inconsistency",
+    "new_values": "referential_integrity",
+    "null_spike": "missing_values",
+}
+
+
 class RulesReasoner:
     """Référence déterministe : une règle générique par type de test, sans lire la documentation."""
 
@@ -196,7 +206,10 @@ class RulesReasoner:
                 recoverable=len(missing) == 1 and len(unexpected) == 1,
                 confidence=0.9,
             )
-        category = CATEGORY_BY_TEST.get(pf["test_type"] or "", "other")
+        test = pf["test_type"] or ""
+        category = CATEGORY_BY_TEST.get(test) or next(
+            (c for kind, c in CATEGORY_BY_FINDING.items() if test.startswith("dq_") and kind in test), "other"
+        )
         return Diagnosis(
             evidence=pf["message"][:200],
             category=category,
