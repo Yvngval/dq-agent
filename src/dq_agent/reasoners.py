@@ -125,10 +125,13 @@ class LLMReasoner:
             f"Previous attempts and feedback:\n{to_prompt_json({'attempts': feedback})}\n\n"
         )
         if self.mode == "sql":
-            out = self.llm.generate(system_prompt(), user + FIX_TASK_SQL, FreeSQLFix)
+            out = self.llm.generate(system_prompt(), user + FIX_TASK_SQL, FreeSQLFix, variation=len(feedback))
             return FixProposal(**out.model_dump())
         out = self.llm.generate(
-            system_prompt(), f"{user}{ACTIONS_HELP}\n\n{FIX_TASK_ACTIONS}", action_model(_columns(context))
+            system_prompt(),
+            f"{user}{ACTIONS_HELP}\n\n{FIX_TASK_ACTIONS}",
+            action_model(_columns(context)),
+            variation=len(feedback),
         )
         params = out.model_dump(exclude={"plan", "rationale", "sql"})
         try:
@@ -145,7 +148,9 @@ class LLMReasoner:
             f"description):\n{to_prompt_json(columns)}\n\nPrevious attempts and feedback:\n"
             f"{to_prompt_json({'attempts': feedback})}\n\nTASK: decide and, if needed, write the test."
         )
-        return self.llm.generate(TEST_SYSTEM.format(domain=agent_vars()["domain"]), user, TestProposal)
+        return self.llm.generate(
+            TEST_SYSTEM.format(domain=agent_vars()["domain"]), user, TestProposal, variation=len(feedback)
+        )
 
 
 def _columns(context: dict) -> list[str]:
