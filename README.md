@@ -35,6 +35,62 @@ Data pipelines rarely break silently: a file arrives with a renamed column, a ba
 ## Results
 
 <!-- RESULTS:START -->
+Measured on 28/10/2026 on an Apple M4 Mac (16 GB): 13 scenarios × 5 seeds, i.e. 65 runs per reasoner, against the simulated reviewer described in [Evaluation](#evaluation). LLM: `qwen2.5-coder:7b`, run locally with Ollama. Full details in [`reports/RESULTS.md`](reports/RESULTS.md) (in French), one line per run in `reports/results_*.jsonl`.
+
+**8 anomalies that dbt tests catch** (40 runs per reasoner)
+
+| Metric | Rules | Hybrid (rules, then LLM) | LLM only |
+|---|---|---|---|
+| Correct diagnosis (category) | 88% | 88% | 90% |
+| Incidents resolved (tests green, data exact) | 62% | **85%** | 55% |
+| Automation rate | 62% | 62% | 45% |
+| Fixes accepted by the reviewer | 50% | 51% | 59% |
+| Proposals blocked by the guardrails | 0 | 14 | 46 |
+| Latency per incident, median / p90 | 3.0 s / 3.4 s | 3.1 s / 61 s | 38 s / 176 s |
+
+**5 anomalies no dbt test catches** (25 runs per reasoner)
+
+| Metric | Rules | Hybrid (rules, then LLM) | LLM only |
+|---|---|---|---|
+| Anomaly spotted by the profiler | 92% | 92% | 92% |
+| Proposed tests accepted by the reviewer | 83% | 45% | 48% |
+| Correct outcome (repaired, or alerted if irreparable) | 72% | **76%** | 56% |
+| Automation rate | 64% | 20% | 0% |
+| Median end-to-end time | 4.3 s | 35 s | 67 s |
+
+The profiler raised no false alert on the scenarios dbt catches (0 out of 120 runs).
+
+<details>
+<summary>Per-scenario details</summary>
+
+| Scenario | Rules: diagnosis · resolved | Hybrid: diagnosis · resolved | LLM only: diagnosis · resolved |
+|---|---|---|---|
+| `missing_flight_date` | 5/5 · 0/5 | 5/5 · 4/5 | 5/5 · 0/5 |
+| `missing_aircraft_id` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 4/5 |
+| `duplicate_rows` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `altitude_outlier` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `schema_drift_rename` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `swapped_timestamps` | 0/5 · 0/5 | 0/5 · 2/5 | 1/5 · 1/5 |
+| `flight_date_shift` | 5/5 · 0/5 | 5/5 · 3/5 | 5/5 · 2/5 |
+| `lowercase_airport_codes` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 0/5 |
+
+| Scenario | Rules: spotted · correct outcome | Hybrid: spotted · correct outcome | LLM only: spotted · correct outcome |
+|---|---|---|---|
+| `typecode_lowercase` | 5/5 · 0/5 | 5/5 · 1/5 | 5/5 · 0/5 |
+| `future_timestamps` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 1/5 |
+| `swapped_coordinates` | 3/5 · 3/5 | 3/5 · 3/5 | 3/5 · 3/5 |
+| `typecode_null_spike` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+| `volume_drop` | 5/5 · 5/5 | 5/5 · 5/5 | 5/5 · 5/5 |
+
+</details>
+
+**Key takeaways**
+
+- **The hybrid reasoner is the best trade-off.** Rules handle known cases in 3 seconds; the LLM only takes over when a rule is rejected or missing. It thus resolves incidents the rules give up on (`missing_flight_date` 4/5 vs 0/5, `flight_date_shift` 3/5 vs 0/5, `swapped_timestamps` 2/5 vs 0/5), with the same median latency.
+- **On its own, the local LLM does worse than the rules**, despite an equally good diagnosis: fixing is where it struggles (46 proposals blocked by the guardrails, `lowercase_airport_codes` 0/5). At 7 billion parameters, it is best used as a fallback.
+- **The cost of the hybrid on anomalies without a test.** When the rules judge an anomaly irreparable (NULL spike, volume drop), the hybrid still hands over to the LLM, which proposes up to 3 rejected tests before raising the same alert. The outcome is still correct, but automation drops from 64% to 20%. Trusting the rules' escalation is the next improvement.
+- **Measured weak spots.** `typecode_lowercase`: the new test is accepted 15 times out of 15, but the upper-casing that follows only succeeds once in 15. `swapped_coordinates`: the Isolation Forest spots the swap only 3 times out of 5. `swapped_timestamps`: the failing duration test points towards an outlier, hence 1 correct diagnosis out of 15.
+- **Progress since the first version**, on the same 8 scenarios: the LLM alone goes from 42% to 55% of incidents resolved and from 59 s to 38 s median latency. In v1, letting it write free SQL instead of choosing a typed action dropped automation from 35% to 6% and acceptance from 49% to 37%. See [`reports/v1/RESULTS.md`](reports/v1/RESULTS.md) (in French).
 <!-- RESULTS:END -->
 
 ---
