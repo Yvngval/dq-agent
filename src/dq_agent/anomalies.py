@@ -157,7 +157,7 @@ def inject_lowercase_airport_codes(con, rng):
 
 
 def inject_typecode_lowercase(con, rng):
-    ids = _pick_rows(con, rng, where="typecode IS NOT NULL")
+    ids = _pick_rows(con, rng, where="typecode <> lower(typecode)")  # codes qui changent vraiment
     con.execute(f"UPDATE raw.flights SET typecode = lower(typecode) WHERE _row_id IN {_in(ids)}")
     _expected_clean(con)
     return ["typecode"], ids, {}
