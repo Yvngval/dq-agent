@@ -35,7 +35,7 @@ def list_tables() -> list[str]:
 
 @server.tool()
 def describe_table(table: str) -> list[dict]:
-    """Colonnes et types d'une table, ex. raw.flights ou staging.stg_flights."""
+    """Colonnes et types d'une table (schéma.table), source ou modèle dbt."""
     with connect(read_only=True) as con:
         return [{"column": c, "type": t} for c, t in table_columns(con, table)]
 

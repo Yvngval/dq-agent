@@ -22,7 +22,7 @@ class Diagnosis(BaseModel):
     # Le champ d'observation vient en premier : le modèle le génère avant de conclure.
     evidence: str = Field(description="What the failing rows show when comparing their columns.")
     category: Category = Field(description="Nature of the data quality incident.")
-    table: str = Field(description="Raw table where the root cause lives, e.g. raw.flights.")
+    table: str = Field(description="Raw table where the root cause lives (schema.table).")
     columns: list[str] = Field(description="Raw columns at the origin of the incident (at most 3).")
     root_cause: str = Field(description="One or two sentences explaining the probable cause.")
     recoverable: bool = Field(
@@ -69,7 +69,7 @@ class TestProposal(BaseModel):
 
     reasoning: str = Field(description="Is this finding a data quality problem that deserves a permanent test? Why?")
     action: Literal["add_test", "escalate"]
-    name: str = Field(description="snake_case test name, e.g. typecode_is_upper_case.")
+    name: str = Field(description="snake_case test name, e.g. code_is_upper_case.")
     description: str = Field(description="What the test checks, in one sentence.")
     condition: str = Field(
         description="SQL boolean condition over raw columns selecting the rows that violate the expectation, "

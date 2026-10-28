@@ -20,11 +20,11 @@ os.environ["DQ_LLM_PROVIDER"] = "rules"
 @pytest.fixture(scope="session")
 def warehouse():
     """Vols synthétiques chargés, certifiés et copiés en référence ; dbt build vert."""
-    from dq_agent import dbt_runner, ingest, synthetic
+    from dq_agent import dbt_runner, ingest, reference, synthetic
 
     synthetic.generate(n_flights=1500, seed=3)
     ingest.certify_baseline()
-    ingest.snapshot()
+    reference.save()
     result = dbt_runner.build()
     assert result.failures == [], [f.name for f in result.failures]
     return result
@@ -32,8 +32,8 @@ def warehouse():
 
 @pytest.fixture
 def clean(warehouse):
-    from dq_agent import ingest
+    from dq_agent import reference
 
-    ingest.reset()
+    reference.restore()
     yield
-    ingest.reset()
+    reference.restore()

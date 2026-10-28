@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from dq_agent import anomalies, dbt_runner, ingest
+from dq_agent import anomalies, dbt_runner, ingest, reference
 from dq_agent.config import settings
 
 app = typer.Typer(help="Agent IA de qualité de données (dbt + DuckDB + LangGraph).", no_args_is_help=True)
@@ -38,7 +38,7 @@ def ingest_cmd(
     synthetic: bool = typer.Option(False, help="Vols synthétiques au lieu des données OpenSky (CI, tests)."),
     certify: bool = typer.Option(True, help="Retirer les anomalies réelles pour obtenir une référence propre."),
 ) -> None:
-    """Charge la zone raw, certifie la référence et en fait une copie (snapshot)."""
+    """Charge les vols dans la zone raw, certifie la référence et en fait une copie (snapshot)."""
     if synthetic:
         from dq_agent import synthetic as synth
 
@@ -49,8 +49,15 @@ def ingest_cmd(
     console.print(f"Chargé : {counts}")
     if certify:
         console.print(f"Certification : {ingest.certify_baseline()}")
-        ingest.snapshot()
+        reference.save()
         console.print("Référence enregistrée dans le schéma snapshot.")
+
+
+@app.command()
+def baseline() -> None:
+    """Enregistre l'état actuel des tables sources comme référence propre (copie + profil statistique)."""
+    tables = reference.save()
+    console.print(f"Référence enregistrée pour {', '.join(tables)} (schéma snapshot, audit.profile_baseline).")
 
 
 @app.command()
@@ -77,17 +84,17 @@ def inject(
 ) -> None:
     """Injecte une anomalie reproductible dans la zone raw (après restauration de la référence)."""
     if list_ or (scenario is None and not mix):
+        groups = anomalies.suites()
         for title, group in (
-            ("Vues par les tests dbt", anomalies.SCENARIOS),
-            ("Invisibles pour les tests (profileur)", anomalies.V2_SCENARIOS),
+            ("Vues par les tests dbt", groups["v1"]),
+            ("Invisibles pour les tests (profileur)", groups["v2"]),
         ):
             console.rule(title)
             for name, s in group.items():
                 console.print(f"[bold]{name}[/] ({s.category}) : {s.description}")
         return
     if mix:
-        names = ["duplicate_rows", "missing_flight_date", "altitude_outlier", "lowercase_airport_codes"]
-        for inj in anomalies.inject_many(names, seed):
+        for inj in anomalies.inject_many(seed):
             console.print(f"{inj.scenario} : {len(inj.row_ids)} lignes, colonnes {inj.columns}")
         return
     inj = anomalies.inject(scenario, seed)
@@ -111,9 +118,9 @@ def profile() -> None:
 
 @app.command()
 def reset() -> None:
-    """Restaure la zone raw depuis la référence."""
-    ingest.reset()
-    console.print("Zone raw restaurée.")
+    """Restaure les tables sources depuis la référence."""
+    tables = reference.restore()
+    console.print(f"Tables restaurées : {', '.join(tables)}.")
 
 
 @app.command()
@@ -159,25 +166,27 @@ def evaluate(
     out = out or settings().root / "reports" / f"results_{provider}.jsonl"
     if out.exists():
         out.unlink()
-    suites = {"v1": anomalies.SCENARIOS, "v2": anomalies.V2_SCENARIOS, "all": anomalies.ALL_SCENARIOS}
+    suites = {**anomalies.suites(), "all": anomalies.registry()}
     rows = ev.evaluate(reasoner, scenario or list(suites[suite]), list(range(1, seeds + 1)), out)
     console.print_json(json.dumps(ev.summarize(rows)))
     from dq_agent import monitoring
 
     monitoring.clear_generated_tests()
-    ingest.reset()
+    reference.restore()
 
 
 @app.command()
 def report(
     results: list[Path] = typer.Argument(None, help="Fichiers JSONL (défaut : reports/results_*.jsonl)."),
+    out: Path = typer.Option(None, help="Fichier Markdown (défaut : reports/RESULTS.md)."),
 ) -> None:
     """Écrit reports/RESULTS.md à partir des résultats d'évaluation."""
     from dq_agent import evaluate as ev
 
     paths = results or sorted((settings().root / "reports").glob("results_*.jsonl"))
     text = ev.report(paths)
-    target = settings().root / "reports" / "RESULTS.md"
+    target = out or settings().root / "reports" / "RESULTS.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Résultats de l'évaluation\n\n" + text + "\n", encoding="utf-8")
     console.print(text)
 

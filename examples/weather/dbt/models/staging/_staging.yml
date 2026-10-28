@@ -1,0 +1,77 @@
+version: 2
+
+# meta.source_columns : lignage colonne par colonne vers la zone raw, utilisé par l'agent.
+models:
+  - name: stg_stations
+    description: Weather stations. One row per station.
+    columns:
+      - name: _row_id
+        meta: {source_table: raw.stations, source_columns: [_row_id]}
+      - name: station_code
+        meta: {source_table: raw.stations, source_columns: [station_code]}
+        data_tests: [not_null, unique]
+      - name: station_name
+        meta: {source_table: raw.stations, source_columns: [station_name]}
+      - name: country_code
+        meta: {source_table: raw.stations, source_columns: [country]}
+        data_tests: [not_null]
+      - name: latitude
+        meta: {source_table: raw.stations, source_columns: [latitude]}
+        data_tests:
+          - in_range: {arguments: {min_value: -90, max_value: 90}}
+      - name: longitude
+        meta: {source_table: raw.stations, source_columns: [longitude]}
+        data_tests:
+          - in_range: {arguments: {min_value: -180, max_value: 180}}
+      - name: elevation_m
+        meta: {source_table: raw.stations, source_columns: [elevation_m]}
+
+  - name: stg_readings
+    description: Hourly observations, typed and renamed. One row per observation.
+    columns:
+      - name: _row_id
+        meta: {source_table: raw.readings, source_columns: [_row_id]}
+      - name: reading_id
+        meta: {source_table: raw.readings, source_columns: [reading_id]}
+        data_tests: [not_null, unique]
+      - name: station_code
+        meta: {source_table: raw.readings, source_columns: [station_code]}
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_stations'), field: station_code}
+      - name: observed_at_utc
+        meta: {source_table: raw.readings, source_columns: [observed_at]}
+        data_tests: [not_null]
+      - name: observation_date
+        description: UTC day of the observation, always equal to CAST(observed_at_utc AS DATE).
+        meta: {source_table: raw.readings, source_columns: [obs_date]}
+        data_tests: [not_null]
+      - name: air_temp_c
+        meta: {source_table: raw.readings, source_columns: [temperature_c]}
+        data_tests:
+          - in_range:
+              arguments: {min_value: "{{ var('temperature_min_c') }}", max_value: "{{ var('temperature_max_c') }}"}
+      - name: air_temp_f
+        description: Temperature in Fahrenheit, derived from air_temp_c.
+        meta: {source_table: raw.readings, source_columns: [temperature_f]}
+        data_tests: [not_null]
+      - name: relative_humidity_pct
+        meta: {source_table: raw.readings, source_columns: [humidity_pct]}
+        data_tests:
+          - in_range: {arguments: {min_value: 0, max_value: 100}}
+      - name: sea_level_pressure_hpa
+        meta: {source_table: raw.readings, source_columns: [pressure_hpa]}
+        data_tests:
+          - in_range:
+              arguments: {min_value: "{{ var('pressure_min_hpa') }}", max_value: "{{ var('pressure_max_hpa') }}"}
+      - name: wind_speed_kmh
+        meta: {source_table: raw.readings, source_columns: [wind_speed_kmh]}
+        data_tests:
+          - in_range: {arguments: {min_value: 0, max_value: 410}}
+      - name: precipitation_mm
+        meta: {source_table: raw.readings, source_columns: [precipitation_mm]}
+        data_tests:
+          - in_range: {arguments: {min_value: 0, max_value: 500}}
+      - name: sensor_model
+        meta: {source_table: raw.readings, source_columns: [sensor_model]}

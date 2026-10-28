@@ -14,7 +14,7 @@
 
 > **A LangGraph agent that watches a dbt pipeline: it finds the root cause of failing tests, proposes a SQL fix, has a human approve it, applies it and re-runs the tests. When everything is green, it also looks for anomalies no test anticipates and proposes the missing tests.**
 
-Data pipelines rarely break silently: a file arrives with a renamed column, a batch is loaded twice, a sensor reports impossible altitudes. dbt tests flag it, but someone still has to understand the cause and fix it, and tests only catch the errors someone thought of. This project automates that work on real air traffic data (OpenSky Network, flights touching France in April 2020), never changes anything without human approval, and measures what the agent actually gets right on 13 kinds of injected anomalies.
+Data pipelines rarely break silently: a file arrives with a renamed column, a batch is loaded twice, a sensor reports impossible altitudes. dbt tests flag it, but someone still has to understand the cause and fix it, and tests only catch the errors someone thought of. This project automates that work on real air traffic data (OpenSky Network, flights touching France in April 2020), never changes anything without human approval, and measures what the agent actually gets right on 13 kinds of injected anomalies. The same agent also monitors a second dbt project, weather station readings, without a single extra line of code.
 
 <p align="center">
   <a href="#results">Results</a> ·
@@ -177,9 +177,24 @@ Each scenario starts from a clean baseline, injects an anomaly with a fixed seed
 | `typecode_null_spike` | aircraft type missing on 40 to 60% of flights instead of 27% | alert |
 | `volume_drop` | 30 to 50% of flights missing | alert |
 
+**Second dataset: 10 anomalies on weather stations** ([`examples/weather`](examples/weather), synthetic data)
+
+| Scenario | Injected anomaly | Correct outcome |
+|---|---|---|
+| `missing_station_code` | reading's station set to NULL | quarantine the rows |
+| `missing_fahrenheit` | `temperature_f` set to NULL | recompute from `temperature_c` |
+| `duplicate_readings` | batch sent twice | delete the copies |
+| `pressure_sentinel` | faulty barometer: 0 or 9,999.9 hPa | set the measurement to NULL |
+| `schema_drift_rename` | column renamed by the provider | rename it back |
+| `observation_date_shift` | `obs_date` in local time, one day off | recompute from `observed_at` |
+| `lowercase_station_codes` | lower-case station codes | upper-case them |
+| `sensor_model_lowercase` *(no test)* | sensor models in lower case | new test, then upper-case them |
+| `future_readings` *(no test)* | clock drift: readings 10 or 20 years ahead | new test, then quarantine |
+| `station_outage` *(no test)* | 30 to 50% of readings missing | alert |
+
 Metrics: correct **diagnosis** (category); **accepted fixes** over fixes submitted to the reviewer; **resolved incident** (tests green and data exactly restored); **correct outcome** for anomalies without a test (repaired, or alerted when it cannot be repaired); **automation rate** (correct outcome reached with the first proposal, no rejection, edit or escalation); **latency** from picking up the incident to the tests passing again, excluding reviewer time, on an Apple M4 Mac (16 GB).
 
-**Limitations.** The reviewer is simulated: it knows the ground truth, which a human does not. Anomalies are injected one at a time and stay close to textbook cases. The rule-based reasoner was written by the author of the scenarios: it is a strong baseline on the cases it covers, not a neutral opponent. The source column descriptions (for example "`day` is always `CAST(lastseen AS DATE)`") are read by the LLM and genuinely contribute to its correct diagnoses. The local LLM is a 7-billion-parameter model; a larger model or Claude would probably do better, but that is not measured here.
+**Limitations.** The reviewer is simulated: it knows the ground truth, which a human does not. Anomalies are injected one at a time and stay close to textbook cases. The rule-based reasoner was written by the author of the scenarios: it is a strong baseline on the cases it covers, not a neutral opponent. The source column descriptions (for example "`day` is always `CAST(lastseen AS DATE)`") are read by the LLM and genuinely contribute to its correct diagnoses. The weather dataset is synthetic and its scenarios were written by the author of the agent, avoiding the names used in the examples given to the LLM. The local LLM is a 7-billion-parameter model; a larger model or Claude would probably do better, but that is not measured here.
 
 ---
 
@@ -208,15 +223,17 @@ make data ingest check              # download, load, dbt build: everything is g
 make demo                           # inject an anomaly and run the agent; you approve in the terminal
 ```
 
-Without downloads or an LLM: `make synthetic`, then `PYTHONPATH=src uv run dq run --provider rules`.
+Without downloads or an LLM: `make synthetic`, then `PYTHONPATH=src uv run dq run --provider rules`. For the weather dataset: `make weather weather-demo`.
 
 | Command | Purpose |
 |---|---|
-| `dq inject --list` | List the 13 scenarios; `dq inject <scenario> --seed N` injects one |
+| `dq baseline` | Record the current state of the sources as the clean reference (copy and statistical profile) |
+| `dq inject --list` | List the scenarios of the evaluated dataset; `dq inject <scenario> --seed N` injects one |
+| `dq reset` | Restore the sources from the reference |
 | `dq run [--provider rules\|ollama\|hybrid\|anthropic]` | Run the agent with review in the terminal |
 | `dq profile` | Compare the data with the reference profile, without changing anything |
 | `dq evaluate --provider ollama --seeds 5 [--suite v1\|v2]` | Evaluate the agent against the simulated reviewer |
-| `dq report` | Write `reports/RESULTS.md` |
+| `dq report [files] [--out]` | Write `reports/RESULTS.md` |
 | `dq audit` | Show the decision log |
 | `dq graph` | Print the LangGraph graph as Mermaid |
 | `make test` | pytest suite (synthetic data) |
@@ -238,25 +255,41 @@ For Claude: copy `.env.example` to `.env`, set `DQ_LLM_PROVIDER=anthropic` (or `
 
 ## Using the agent on another dbt project
 
-Nothing in the agent's code mentions flights: the tables it may fix are the **sources declared in dbt**, the processing order comes from the **dbt graph**, and the only description of the domain given to the LLM is a dbt variable. For another project on DuckDB you need:
+The agent does not know the domain of the data: it reads the dbt project it is pointed at. The tables it may fix are the **sources declared in dbt**, the processing order comes from the **dbt graph**, and the description of the domain given to the LLM is a dbt variable. The [`examples/weather`](examples/weather) folder proves it: a second dbt project, hourly readings from 32 weather stations, that the same agent monitors and repairs without a single extra line of code. Only environment variables change:
 
-1. **dbt tests**, that is the detectors: the agent fixes what the tests see, and the profiler spots what they miss;
-2. **described source columns** in the dbt YAML (the schema contract and its documentation, which the LLM reads);
-3. **column lineage** for staging models (`meta: {source_table, source_columns}`), otherwise the agent falls back to the single upstream source;
-4. **a `_row_id` technical column** in each source table (quarantine, deduplication, preview);
-5. the `dq_agent.domain` variable in `dbt_project.yml`.
+```bash
+export PYTHONPATH=src DQ_DBT_DIR=examples/weather/dbt DQ_DATA_DIR=examples/weather/data
+uv run python examples/weather/generate.py     # load the readings into DuckDB
+uv run dq baseline                             # clean reference and statistical profile
+uv run dq check                                # dbt build: everything is green
+export DQ_SCENARIOS=examples/weather/scenarios.py
+uv run dq inject missing_fahrenheit --seed 1   # break the data
+uv run dq run --provider hybrid                # the agent repairs, you approve
+```
 
-The anomaly scenarios and the simulated reviewer are specific to this flight dataset: they measure the agent, they are not needed to run it. Only DuckDB is supported for now.
+For another dbt project on DuckDB you need:
+
+1. `DQ_DBT_DIR` pointing to the project and `DQ_DUCKDB_PATH` to the database, with a `profiles.yml` whose path is `{{ env_var('DQ_DUCKDB_PATH') }}`;
+2. **dbt tests**, that is the detectors: the agent fixes what the tests see, and the profiler spots what they miss;
+3. **described source columns** in the dbt YAML: this is the schema contract, where the LLM reads for instance that "`obs_date` is always `CAST(observed_at AS DATE)`";
+4. **column lineage** for staging models (`meta: {source_table, source_columns}`), otherwise the agent falls back to the single upstream source;
+5. **a `_row_id` technical column** in each source table (quarantine, deduplication, preview);
+6. for each singular test, its category: `{{ config(meta={'dq_category': 'date_inconsistency'}) }}`; generic tests (`not_null`, `unique`, `relationships`, `accepted_values`, `in_range`) are recognised out of the box;
+7. the `dq_agent.domain` variable in `dbt_project.yml`, then `dq baseline` once the data is deemed clean.
+
+Failing rows are always kept (`dbt build --store-failures`). To measure the agent on a new project, a scenario file (`DQ_SCENARIOS`, modelled on [`examples/weather/scenarios.py`](examples/weather/scenarios.py)) describes the anomalies to inject and the expected state after a correct fix. Only DuckDB is supported for now.
 
 ---
 
 ## Project structure
 
 ```text
-dbt/                    dbt project: sources (contract), staging, marts, custom and generated tests
+dbt/                    flights dbt project: sources (contract), staging, marts, custom and generated tests
+examples/weather/       second dbt project (weather stations): generator, dbt project, anomaly scenarios
 src/dq_agent/
-  ingest.py             OpenSky + OurAirports loading, pseudonymisation, clean baseline
-  anomalies.py          13 reproducible anomaly scenarios and their ground truth
+  ingest.py             OpenSky + OurAirports loading, pseudonymisation, certification
+  reference.py          clean reference of the dbt sources (copy and profile), restore
+  anomalies.py          injection tools, flight scenarios and their ground truth
   dbt_runner.py         dbt build, run_results.json, lineage and dbt graph parsing
   context.py            read-only context tools
   reasoners.py          reasoners: rules, LLM (typed actions or free SQL), hybrid
@@ -268,8 +301,8 @@ src/dq_agent/
   review.py             reviewers: terminal, simulated (evaluation)
   evaluate.py           measured evaluation
   mcp_server.py         read-only MCP server
-tests/                  pytest suite (synthetic data)
-reports/                evaluation results (JSONL) and RESULTS.md; reports/v1/: first version
+tests/                  pytest suite (synthetic data, flights and weather)
+reports/                evaluation results (JSONL) and RESULTS.md; reports/weather/: weather dataset; reports/v1/: first version
 ```
 
 ## Contributing

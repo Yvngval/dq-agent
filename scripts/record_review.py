@@ -14,7 +14,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from dq_agent import anomalies, ingest, monitoring
+from dq_agent import anomalies, monitoring, reference
 from dq_agent.graph import run_agent
 from dq_agent.reasoners import make_reasoner
 from dq_agent.review import CLIReviewer
@@ -55,7 +55,7 @@ def main() -> None:
     reviewer = RecordFirstReview(console, Path(args.out), f"dq run · {args.scenario}")
     state = run_agent(make_reasoner(args.provider), reviewer, run_id=f"record-{args.scenario}")
     monitoring.clear_generated_tests()
-    ingest.reset()
+    reference.restore()
     print(f"{args.out} écrit ; statut final de l'exécution : {state['status']}")
 
 

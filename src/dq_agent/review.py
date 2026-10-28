@@ -27,7 +27,9 @@ class AutoApproveReviewer:
         return {"decision": "approve", "reviewer": self.name}
 
 
-def compare_to_expected(con, expected: str = "eval.expected_flights", actual: str = "raw.flights") -> dict:
+def compare_to_expected(con, actual: str | None = None, expected: str = "eval.expected") -> dict:
+    """Compare la table injectée (ou `actual`) à l'état attendu écrit par l'injection."""
+    actual = actual or injected_table(con)
     exp_cols = [c for c, _ in table_columns(con, expected)]
     act_cols = [c for c, _ in table_columns(con, actual)]
     if set(exp_cols) != set(act_cols):
@@ -52,13 +54,23 @@ def compare_to_expected(con, expected: str = "eval.expected_flights", actual: st
     }
 
 
-def injected_row_ids(con) -> set[int] | None:
+def _injection(con) -> dict | None:
     exists = con.execute(
         "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'eval' AND table_name = 'injection'"
     ).fetchone()[0]
-    if not exists:
-        return None
-    return set(json.loads(con.execute("SELECT payload FROM eval.injection").fetchone()[0])["row_ids"])
+    return json.loads(con.execute("SELECT payload FROM eval.injection").fetchone()[0]) if exists else None
+
+
+def injected_row_ids(con) -> set[int] | None:
+    injection = _injection(con)
+    return set(injection["row_ids"]) if injection else None
+
+
+def injected_table(con) -> str:
+    injection = _injection(con)
+    if not injection:
+        raise RuntimeError("Aucune injection en cours (eval.injection absente).")
+    return injection["table"]
 
 
 class OracleReviewer:

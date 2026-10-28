@@ -18,7 +18,8 @@ load_dotenv(ROOT / ".env")
 class Settings:
     root: Path = ROOT
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_DATA_DIR", ROOT / "data")))
-    dbt_dir: Path = ROOT / "dbt"
+    # Projet dbt surveillé : celui du dépôt par défaut, ou n'importe quel projet dbt-duckdb.
+    dbt_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_DBT_DIR", ROOT / "dbt")).resolve())
     logs_dir: Path = field(default_factory=lambda: Path(os.getenv("DQ_LOGS_DIR", ROOT / "logs")))
 
     llm_provider: str = field(default_factory=lambda: os.getenv("DQ_LLM_PROVIDER", "ollama"))
@@ -33,6 +34,8 @@ class Settings:
     max_iterations: int = field(default_factory=lambda: int(os.getenv("DQ_MAX_ITERATIONS", "8")))
     # Surveillance par profil statistique quand tous les tests dbt passent.
     profiling: bool = field(default_factory=lambda: os.getenv("DQ_PROFILING", "1") != "0")
+    # Évaluation : fichier de scénarios d'anomalies d'un autre jeu de données (défaut : les vols).
+    scenarios_file: str | None = field(default_factory=lambda: os.getenv("DQ_SCENARIOS"))
 
     @property
     def duckdb_path(self) -> Path:
@@ -63,8 +66,8 @@ def settings() -> Settings:
 @lru_cache
 def quality_vars() -> dict:
     """Seuils de qualité partagés entre dbt (vars) et Python : une seule source de vérité."""
-    project = yaml.safe_load((ROOT / "dbt" / "dbt_project.yml").read_text())
-    return project["vars"]
+    project = yaml.safe_load((settings().dbt_dir / "dbt_project.yml").read_text())
+    return project.get("vars") or {}
 
 
 def agent_vars() -> dict:

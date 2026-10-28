@@ -5,7 +5,7 @@ Trois étapes :
    pseudonymisation des identifiants d'avions (licence OpenSky) et minimisation des colonnes.
 2. `certify_baseline` : retire les anomalies déjà présentes dans les vraies données,
    pour disposer d'une référence propre sur laquelle mesurer l'agent.
-3. `snapshot` / `reset` : copie de référence et restauration de la zone raw.
+La copie de référence et la restauration sont génériques : voir `dq_agent.reference`.
 """
 
 from __future__ import annotations
@@ -118,21 +118,3 @@ def certify_baseline() -> dict[str, int]:
         ).fetchone()[0]
         counts["lignes conservées"] = row_count(con, "raw.flights")
         return counts
-
-
-def snapshot() -> None:
-    """Copie de référence des tables raw et profil statistique associé (pour le profileur)."""
-    from dq_agent import profiler
-
-    with connect() as con:
-        con.execute("CREATE SCHEMA IF NOT EXISTS snapshot")
-        con.execute("CREATE OR REPLACE TABLE snapshot.flights AS SELECT * FROM raw.flights")
-        con.execute("CREATE OR REPLACE TABLE snapshot.airports AS SELECT * FROM raw.airports")
-    profiler.build_baseline()
-
-
-def reset() -> None:
-    """Restaure la zone raw depuis la copie de référence (avant chaque scénario d'évaluation)."""
-    with connect() as con:
-        con.execute("CREATE OR REPLACE TABLE raw.flights AS SELECT * FROM snapshot.flights")
-        con.execute("CREATE OR REPLACE TABLE raw.airports AS SELECT * FROM snapshot.airports")

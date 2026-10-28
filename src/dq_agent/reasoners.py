@@ -24,8 +24,8 @@ errored. You work in two steps, each asked separately: DIAGNOSE the root cause, 
 
 Incident categories:
 - missing_values: NULLs in a required raw column.
-- duplicates: the same flight (same business key) loaded more than once.
-- outliers: numeric measurements that are physically impossible (altitude, coordinates...).
+- duplicates: the same record (same business key) loaded more than once.
+- outliers: numeric measurements that are physically impossible (sentinel values, unit errors...).
 - schema_drift: raw columns renamed, missing or retyped compared with the source contract.
 - date_inconsistency: timestamps or dates that contradict each other (order of events, day vs timestamp).
 - referential_integrity: codes that do not match the reference table (format, case, unknown codes).
@@ -165,7 +165,7 @@ def _incident(context: dict) -> str:
     return f"Incident:\n```json\n{to_prompt_json(llm_view(context))}\n```"
 
 
-SINGULAR_DATE_TESTS = ("assert_last_seen_after_first_seen", "assert_flight_date_matches_last_seen")
+# Tests génériques ; un test singulier déclare sa catégorie dans dbt : config(meta={'dq_category': ...}).
 CATEGORY_BY_TEST = {
     "not_null": "missing_values",
     "unique": "duplicates",
@@ -173,7 +173,6 @@ CATEGORY_BY_TEST = {
     "in_range": "outliers",
     "relationships": "referential_integrity",
     "accepted_values": "referential_integrity",
-    **{name: "date_inconsistency" for name in SINGULAR_DATE_TESTS},
 }
 
 
@@ -207,8 +206,10 @@ class RulesReasoner:
                 confidence=0.9,
             )
         test = pf["test_type"] or ""
-        category = CATEGORY_BY_TEST.get(test) or next(
-            (c for kind, c in CATEGORY_BY_FINDING.items() if test.startswith("dq_") and kind in test), "other"
+        category = (
+            pf.get("category")
+            or CATEGORY_BY_TEST.get(test)
+            or next((c for kind, c in CATEGORY_BY_FINDING.items() if test.startswith("dq_") and kind in test), "other")
         )
         return Diagnosis(
             evidence=pf["message"][:200],

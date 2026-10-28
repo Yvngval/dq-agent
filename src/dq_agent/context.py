@@ -95,6 +95,7 @@ def gather(primary: Failure, failures: list[Failure]) -> dict:
                 "node": primary.unique_id,
                 "kind": "model_error" if primary.resource_type == "model" else "failing_test",
                 "test_type": primary.test_type,
+                "category": primary.category,
                 "model": primary.model,
                 "column": primary.column,
                 "test_arguments": primary.test_kwargs,

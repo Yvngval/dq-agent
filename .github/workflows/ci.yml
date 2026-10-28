@@ -22,7 +22,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Lint
-        run: uv run --no-sync ruff check src tests
+        run: uv run --no-sync ruff check src tests examples scripts
 
       - name: Tests (pytest, sur données synthétiques)
         run: uv run --no-sync pytest -q
@@ -39,3 +39,18 @@ jobs:
           uv run --no-sync dq inject duplicate_rows --seed 1
           uv run --no-sync dq evaluate --provider rules --seeds 1 --scenario duplicate_rows \
             --scenario schema_drift_rename --scenario future_timestamps --scenario volume_drop
+
+      # Même agent, autre projet dbt : seules les variables d'environnement changent.
+      - name: Second jeu de données (stations météo)
+        env:
+          DQ_DBT_DIR: examples/weather/dbt
+          DQ_DATA_DIR: ${{ github.workspace }}/examples/weather/data
+          DQ_DUCKDB_PATH: ${{ github.workspace }}/examples/weather/data/warehouse.duckdb
+          DQ_SCENARIOS: examples/weather/scenarios.py
+        run: |
+          uv run --no-sync python examples/weather/generate.py --days 7
+          uv run --no-sync dq baseline
+          uv run --no-sync dq check
+          uv run --no-sync dq evaluate --provider rules --seeds 1 --scenario duplicate_readings \
+            --scenario pressure_sentinel --scenario future_readings --scenario station_outage \
+            --out reports/weather/ci_results.jsonl

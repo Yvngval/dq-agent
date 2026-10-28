@@ -1,0 +1,71 @@
+version: 2
+
+# Contrat de la zone d'atterrissage : ce que le pipeline attend des fichiers des stations.
+sources:
+  - name: raw
+    schema: raw
+    description: Landing zone, loaded by examples/weather/generate.py (synthetic data).
+    tables:
+      - name: stations
+        description: "One row per automatic weather station."
+        columns:
+          - name: _row_id
+            data_type: BIGINT
+            description: "Technical row id assigned at load time."
+          - name: station_code
+            data_type: VARCHAR
+            description: "Station identifier, upper case: country-city-number, e.g. FR-PAR-01."
+          - name: station_name
+            data_type: VARCHAR
+            description: "Human-readable station name."
+          - name: country
+            data_type: VARCHAR
+            description: "ISO 3166-1 alpha-2 country code, upper case."
+          - name: latitude
+            data_type: DOUBLE
+            description: "Latitude of the station (degrees)."
+          - name: longitude
+            data_type: DOUBLE
+            description: "Longitude of the station (degrees)."
+          - name: elevation_m
+            data_type: DOUBLE
+            description: "Elevation of the station above sea level (metres)."
+      - name: readings
+        description: "One row per hourly observation sent by a station."
+        columns:
+          - name: _row_id
+            data_type: BIGINT
+            description: "Technical row id assigned at load time."
+          - name: reading_id
+            data_type: VARCHAR
+            description: "Identifier of the observation, unique. Not recoverable from other columns."
+          - name: station_code
+            data_type: VARCHAR
+            description: "Code of the station that sent the observation (see raw.stations). Not recoverable from other columns."
+          - name: observed_at
+            data_type: TIMESTAMP
+            description: "UTC timestamp of the observation (on the hour)."
+          - name: obs_date
+            data_type: DATE
+            description: "UTC day of the observation, i.e. always CAST(observed_at AS DATE)."
+          - name: temperature_c
+            data_type: DOUBLE
+            description: "Air temperature measured by the sensor (degrees Celsius, one decimal)."
+          - name: temperature_f
+            data_type: DOUBLE
+            description: "Air temperature in degrees Fahrenheit, always round(temperature_c * 9 / 5 + 32, 1)."
+          - name: humidity_pct
+            data_type: DOUBLE
+            description: "Relative humidity measured by the sensor (percent, 0 to 100)."
+          - name: pressure_hpa
+            data_type: DOUBLE
+            description: "Sea-level pressure measured by the barometer (hPa)."
+          - name: wind_speed_kmh
+            data_type: DOUBLE
+            description: "Mean wind speed over the hour (km/h)."
+          - name: precipitation_mm
+            data_type: DOUBLE
+            description: "Precipitation over the hour (mm). NULL when the rain gauge did not report, which is normal."
+          - name: sensor_model
+            data_type: VARCHAR
+            description: "Model of the station's sensor suite, upper case, e.g. VAISALA-WXT536."

@@ -39,7 +39,7 @@ def _decisions(run_id: str) -> list[dict]:
 
 def run_scenario(reasoner: Reasoner, scenario: str, seed: int) -> dict:
     monitoring.clear_generated_tests()
-    spec = anomalies.ALL_SCENARIOS[scenario]
+    spec = anomalies.registry()[scenario]
     injection = anomalies.inject(scenario, seed)
     run_id = f"eval-{reasoner.name.replace(':', '_')}-{scenario}-{seed}-{int(time.time())}"
     start = time.perf_counter()
@@ -183,12 +183,12 @@ def _per_scenario(by_provider, scenarios, header, cell) -> list[str]:
         "| Scénario | " + " | ".join(f"{p} : {header}" for p in by_provider) + " |",
         "|---|" + "---|" * len(by_provider),
     ]
-    for scenario, spec in scenarios.items():
+    for scenario, category in scenarios.items():
         cells = []
         for p in by_provider:
             rs = [r for r in by_provider[p] if r["scenario"] == scenario]
             cells.append(cell(rs) if rs else "-")
-        lines.append(f"| `{scenario}` ({spec.category}) | " + " | ".join(cells) + " |")
+        lines.append(f"| `{scenario}` ({category}) | " + " | ".join(cells) + " |")
     return lines
 
 
@@ -198,15 +198,17 @@ def report(paths: list[Path]) -> str:
     pct = lambda x: f"{x:.0%}"  # noqa: E731
     sec = lambda x: f"{x:.1f}"  # noqa: E731
     out = []
-    for suite, scenarios in (("v1", anomalies.SCENARIOS), ("v2", anomalies.V2_SCENARIOS)):
+    for suite in ("v1", "v2"):
         by_provider: dict[str, list[dict]] = defaultdict(list)
+        scenarios: dict[str, str] = {}  # scénario -> catégorie, dans l'ordre d'évaluation
         for r in rows:
             if r.get("suite", "v1") == suite:
                 by_provider[r["provider"]].append(r)
+                scenarios.setdefault(r["scenario"], r["category"])
         if not by_provider:
             continue
         if suite == "v1":
-            out.append("**Anomalies détectées par les tests dbt** (8 scénarios)\n")
+            out.append(f"**Anomalies détectées par les tests dbt** ({len(scenarios)} scénarios)\n")
             out += _table(
                 by_provider,
                 [
@@ -233,7 +235,10 @@ def report(paths: list[Path]) -> str:
                 ),
             )
         else:
-            out.append("\n**Anomalies qu'aucun test dbt ne voit** (5 scénarios, profileur + Isolation Forest)\n")
+            out.append(
+                f"\n**Anomalies qu'aucun test dbt ne voit** ({len(scenarios)} scénarios, "
+                "profileur + Isolation Forest)\n"
+            )
             out += _table(
                 by_provider,
                 [

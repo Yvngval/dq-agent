@@ -42,6 +42,7 @@ class Failure:
     source_table: str | None = None
     source_columns: list[str] = field(default_factory=list)
     depth: int = 0  # profondeur du modèle dans le graphe dbt (0 = sources)
+    category: str | None = None  # catégorie d'incident déclarée sur le test (meta dq_category)
 
     @property
     def key(self) -> str:
@@ -92,9 +93,12 @@ def run_dbt(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def build(select: str | None = None) -> BuildResult:
-    """Lance `dbt build` (modèles + tests dans l'ordre du DAG) et renvoie les échecs."""
+    """Lance `dbt build` (modèles + tests dans l'ordre du DAG) et renvoie les échecs.
+
+    `--store-failures` garde les lignes en échec dans l'entrepôt, quel que soit le réglage du projet.
+    """
     start = time.perf_counter()
-    args = ["build", "--quiet"]
+    args = ["build", "--quiet", "--store-failures"]
     if select:
         args += ["--select", select]
     proc = run_dbt(args)
@@ -152,6 +156,7 @@ def _to_failure(result: dict, node: dict, manifest: dict) -> Failure:
         if len(upstream) == 1:
             source_table = upstream[0]
 
+    meta = {**(node.get("meta") or {}), **((node.get("config") or {}).get("meta") or {})}
     relation = result.get("relation_name") or node.get("relation_name")
     return Failure(
         unique_id=result["unique_id"],
@@ -169,6 +174,7 @@ def _to_failure(result: dict, node: dict, manifest: dict) -> Failure:
         source_table=source_table,
         source_columns=source_columns,
         depth=model_depths(manifest).get(model, 0 if model is None else 9),
+        category=meta.get("dq_category"),
     )
 
 

@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: fct_daily_weather
+    description: Daily summary per station.
+    data_tests:
+      - unique_combination:
+          arguments: {combination: [station_code, observation_date]}
+    columns:
+      - name: station_code
+        data_tests: [not_null]
+      - name: observation_date
+        data_tests: [not_null]
+      - name: readings
+        data_tests:
+          - in_range: {arguments: {min_value: 1, max_value: 24}}

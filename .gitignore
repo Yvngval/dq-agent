@@ -15,6 +15,11 @@ data/
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
+examples/*/dbt/target/
+examples/*/dbt/logs/
+examples/*/dbt/.user.yml
 logs/
 reports/eval_run.log
+reports/weather/eval_run.log
+reports/weather/ci_results.jsonl
 dbt/.user.yml

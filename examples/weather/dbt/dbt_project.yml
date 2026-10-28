@@ -1,0 +1,33 @@
+name: dq_weather
+version: "0.1.0"
+config-version: 2
+profile: dq_weather
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Seule partie propre au domaine que lit l'agent : la description donnée au LLM.
+  dq_agent:
+    domain: "hourly weather observations from a network of automatic stations (synthetic data)"
+  temperature_min_c: -60
+  temperature_max_c: 60
+  pressure_min_hpa: 870
+  pressure_max_hpa: 1085
+
+models:
+  dq_weather:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+data_tests:
+  dq_weather:
+    +store_failures: true
+    +schema: test_failures

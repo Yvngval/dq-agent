@@ -1,0 +1,10 @@
+dq_weather:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DQ_DUCKDB_PATH', 'data/warehouse.duckdb') }}"
+      schema: main
+      threads: 4
+      settings:
+        TimeZone: UTC

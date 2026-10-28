@@ -16,7 +16,7 @@ import duckdb
 import sqlglot
 from sqlglot import exp
 
-from dq_agent import dbt_runner
+from dq_agent import dbt_runner, reference
 from dq_agent.config import settings
 from dq_agent.warehouse import connect, row_count
 
@@ -45,10 +45,6 @@ def test_name(name: str) -> str:
     return f"dq_{slug}" if not slug.startswith("dq_") else slug
 
 
-def _history_table(table: str) -> str:
-    return "snapshot." + table.split(".", 1)[1]
-
-
 def validate_test(condition: str, table: str) -> TestValidation:
     """Vérifie la condition et mesure ce qu'elle signale aujourd'hui et dans l'historique validé."""
     condition = condition.strip().removeprefix("WHERE ").strip()
@@ -66,7 +62,7 @@ def validate_test(condition: str, table: str) -> TestValidation:
             v.table_rows = row_count(con, table)
             v.current_rows = con.execute(f"SELECT count(*) FROM {table} WHERE {condition}").fetchone()[0]
             v.sample = [list(r) for r in con.execute(f"SELECT * FROM {table} WHERE {condition} LIMIT 3").fetchall()]
-            history = _history_table(table)
+            history = reference.snapshot_table(table)
             exists = con.execute(
                 "SELECT count(*) FROM information_schema.tables WHERE table_schema || '.' || table_name = ?", [history]
             ).fetchone()[0]
