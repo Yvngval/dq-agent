@@ -62,6 +62,5 @@ def test_apply_fix_quarantines_rows(clean):
     assert result["quarantined_rows"] == 3
     with connect() as con:
         assert con.execute("SELECT count(*) FROM raw.flights WHERE icao24 IS NULL").fetchone()[0] == 0
-        saved = con.execute(
-            "SELECT count(*) FROM audit.quarantine WHERE incident_id = 'test-incident'").fetchone()[0]
+        saved = con.execute("SELECT count(*) FROM audit.quarantine WHERE incident_id = 'test-incident'").fetchone()[0]
     assert saved == 3

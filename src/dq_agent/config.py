@@ -31,6 +31,8 @@ class Settings:
     max_affected_fraction: float = field(default_factory=lambda: float(os.getenv("DQ_MAX_AFFECTED_FRACTION", "0.10")))
     max_attempts: int = field(default_factory=lambda: int(os.getenv("DQ_MAX_ATTEMPTS", "3")))
     max_iterations: int = field(default_factory=lambda: int(os.getenv("DQ_MAX_ITERATIONS", "8")))
+    # Surveillance par profil statistique quand tous les tests dbt passent.
+    profiling: bool = field(default_factory=lambda: os.getenv("DQ_PROFILING", "1") != "0")
 
     @property
     def duckdb_path(self) -> Path:
@@ -63,3 +65,8 @@ def quality_vars() -> dict:
     """Seuils de qualité partagés entre dbt (vars) et Python : une seule source de vérité."""
     project = yaml.safe_load((ROOT / "dbt" / "dbt_project.yml").read_text())
     return project["vars"]
+
+
+def agent_vars() -> dict:
+    """Réglages de l'agent propres au projet (domaine décrit au LLM), dans les vars dbt `dq_agent`."""
+    return quality_vars().get("dq_agent", {"domain": "data"})

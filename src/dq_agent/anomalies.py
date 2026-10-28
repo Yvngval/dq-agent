@@ -24,6 +24,8 @@ CATEGORIES = (
     "schema_drift",
     "date_inconsistency",
     "referential_integrity",
+    "format_inconsistency",
+    "volume_anomaly",
 )
 
 RENAMES = {
@@ -57,6 +59,9 @@ class Scenario:
     recoverable: bool
     description: str
     inject: Callable[[duckdb.DuckDBPyConnection, random.Random], tuple[list[str], list[int], dict]]
+    # Scénarios « v2 » : aucun test dbt ne les voit, seul le profileur peut les détecter.
+    expected_finding: str | None = None
+    repairable: bool = True  # False : on attend une alerte (escalade), pas une correction
 
 
 def _pick_rows(con, rng: random.Random, where: str = "true", low: int = 10, high: int = 60) -> list[int]:
@@ -150,6 +155,55 @@ def inject_lowercase_airport_codes(con, rng):
     return [column], ids, {}
 
 
+def inject_typecode_lowercase(con, rng):
+    ids = _pick_rows(con, rng, where="typecode IS NOT NULL")
+    con.execute(f"UPDATE raw.flights SET typecode = lower(typecode) WHERE _row_id IN {_in(ids)}")
+    _expected_clean(con)
+    return ["typecode"], ids, {}
+
+
+def inject_future_timestamps(con, rng):
+    ids = _pick_rows(con, rng, low=5, high=30)
+    years = rng.choice([10, 20])
+    con.execute(
+        f"UPDATE raw.flights SET firstseen = firstseen + INTERVAL ({years}) YEAR, "
+        f"lastseen = lastseen + INTERVAL ({years}) YEAR, day = day + INTERVAL ({years}) YEAR "
+        f"WHERE _row_id IN {_in(ids)}"
+    )
+    # Horodatages cohérents entre eux mais impossibles : la bonne réaction est la quarantaine.
+    con.execute(
+        f"CREATE OR REPLACE TABLE eval.expected_flights AS "
+        f"SELECT * FROM snapshot.flights WHERE _row_id NOT IN {_in(ids)}"
+    )
+    return ["firstseen", "lastseen", "day"], ids, {"years": years}
+
+
+def inject_swapped_coordinates(con, rng):
+    ids = _pick_rows(con, rng, low=20, high=60)
+    con.execute(
+        f"UPDATE raw.flights SET latitude_1 = longitude_1, longitude_1 = latitude_1 WHERE _row_id IN {_in(ids)}"
+    )
+    _expected_clean(con)
+    return ["latitude_1", "longitude_1"], ids, {}
+
+
+def inject_typecode_null_spike(con, rng):
+    share, salt = rng.choice([0.4, 0.6]), rng.randint(0, 999)
+    con.execute(
+        f"UPDATE raw.flights SET typecode = NULL "
+        f"WHERE typecode IS NOT NULL AND hash(_row_id, {salt}) % 100 < {share * 100:.0f}"
+    )
+    _expected_clean(con)
+    return ["typecode"], [], {"share_nulled": share}
+
+
+def inject_volume_drop(con, rng):
+    share = rng.choice([0.3, 0.5])
+    con.execute(f"DELETE FROM raw.flights WHERE hash(_row_id, {rng.randint(0, 999)}) % 100 < {share * 100:.0f}")
+    _expected_clean(con)
+    return [], [], {"share_deleted": share}
+
+
 SCENARIOS: dict[str, Scenario] = {
     s.name: s
     for s in [
@@ -201,8 +255,59 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
+V2_SCENARIOS: dict[str, Scenario] = {
+    s.name: s
+    for s in [
+        Scenario(
+            "typecode_lowercase",
+            "format_inconsistency",
+            True,
+            "Types d'avion en minuscules (aucun test ne porte sur cette colonne).",
+            inject_typecode_lowercase,
+            expected_finding="case_drift",
+        ),
+        Scenario(
+            "future_timestamps",
+            "outliers",
+            False,
+            "Vols datés 10 ou 20 ans dans le futur, cohérents entre eux.",
+            inject_future_timestamps,
+            expected_finding="out_of_range",
+        ),
+        Scenario(
+            "swapped_coordinates",
+            "outliers",
+            True,
+            "Latitude et longitude de départ inversées (valeurs plausibles une à une).",
+            inject_swapped_coordinates,
+            expected_finding="unusual_rows",
+            repairable=False,
+        ),
+        Scenario(
+            "typecode_null_spike",
+            "missing_values",
+            False,
+            "Type d'avion manquant sur 40 à 60 % des vols au lieu de 27 %.",
+            inject_typecode_null_spike,
+            expected_finding="null_spike",
+            repairable=False,
+        ),
+        Scenario(
+            "volume_drop",
+            "volume_anomaly",
+            False,
+            "30 à 50 % des vols manquent au chargement.",
+            inject_volume_drop,
+            expected_finding="volume_change",
+            repairable=False,
+        ),
+    ]
+}
+ALL_SCENARIOS = {**SCENARIOS, **V2_SCENARIOS}
+
+
 def inject(scenario_name: str, seed: int, *, from_snapshot: bool = True) -> Injection:
-    scenario = SCENARIOS[scenario_name]
+    scenario = ALL_SCENARIOS[scenario_name]
     if from_snapshot:
         reset()
     rng = random.Random(f"{scenario_name}:{seed}")

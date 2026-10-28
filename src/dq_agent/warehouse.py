@@ -14,8 +14,6 @@ import duckdb
 
 from dq_agent.config import settings
 
-RAW_TABLES = ("raw.flights", "raw.airports")
-
 
 @contextmanager
 def connect(path: Path | None = None, read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
@@ -32,7 +30,7 @@ def connect(path: Path | None = None, read_only: bool = False) -> Iterator[duckd
 def fetch_dicts(con: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> list[dict]:
     cur = con.execute(sql, params or [])
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
 
 def table_columns(con: duckdb.DuckDBPyConnection, table: str) -> list[tuple[str, str]]:

@@ -11,6 +11,9 @@ clean-targets: ["target", "dbt_packages"]
 
 # Seuils de qualité : lus aussi par Python (dq_agent.config.quality_vars).
 vars:
+  # Seule partie propre au domaine que lit l'agent : la description donnée au LLM.
+  dq_agent:
+    domain: "flight data (OpenSky Network, flights touching France, April 2020)"
   altitude_min_m: -500
   altitude_max_m: 16000
   duration_min_min: 1

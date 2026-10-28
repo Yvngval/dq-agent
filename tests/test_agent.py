@@ -19,8 +19,10 @@ class RejectAll:
         return {"decision": "reject", "reviewer": self.name, "comment": "non"}
 
 
-@pytest.mark.parametrize("scenario", ["duplicate_rows", "schema_drift_rename", "lowercase_airport_codes",
-                                      "altitude_outlier", "missing_aircraft_id"])
+@pytest.mark.parametrize(
+    "scenario",
+    ["duplicate_rows", "schema_drift_rename", "lowercase_airport_codes", "altitude_outlier", "missing_aircraft_id"],
+)
 def test_agent_resolves_with_rules(clean, scenario):
     anomalies.inject(scenario, seed=2)
     state = run_agent(RulesReasoner(), OracleReviewer(), run_id=f"test-{scenario}")
@@ -43,10 +45,51 @@ def test_every_step_is_logged(clean):
     run_agent(RulesReasoner(), OracleReviewer(), run_id="test-log")
     lines = settings().decisions_log.read_text(encoding="utf-8").splitlines()
     steps = [r["step"] for r in map(json.loads, lines) if r["run_id"] == "test-log"]
-    assert steps == ["run_checks", "select_incident", "diagnose", "propose_fix", "validate_fix",
-                     "human_review", "apply_fix", "run_checks", "finish"]
+    assert steps == [
+        "run_checks",
+        "select_incident",
+        "diagnose",
+        "propose_fix",
+        "validate_fix",
+        "human_review",
+        "apply_fix",
+        "run_checks",
+        "profile",
+        "finish",
+    ]
 
 
 def test_green_pipeline_needs_no_incident(clean):
     state = run_agent(RulesReasoner(), OracleReviewer(), run_id="test-green")
     assert state["status"] == "green" and state.get("handled", []) == []
+
+
+def test_unseen_anomaly_becomes_a_test_then_is_repaired(clean):
+    """Panne invisible pour dbt : profileur -> test proposé et validé -> correction -> vert."""
+    from dq_agent import evaluate
+
+    row = evaluate.run_scenario(RulesReasoner(), "future_timestamps", seed=1)
+    assert row["profile_detected"] and row["tests_written"] == 1 and row["tests_accepted"] == 1
+    assert row["resolved"] and row["outcome_ok"]
+
+
+def test_aggregate_anomaly_is_escalated_not_tested(clean):
+    from dq_agent import evaluate
+
+    row = evaluate.run_scenario(RulesReasoner(), "volume_drop", seed=1)
+    assert row["profile_detected"] and row["alerted"] and row["tests_written"] == 0
+    assert row["final_status"] == "needs_human" and row["outcome_ok"]
+
+
+def test_profiling_can_be_disabled(clean, monkeypatch):
+    from dq_agent import config
+
+    anomalies.inject("volume_drop", seed=1)
+    monkeypatch.setenv("DQ_PROFILING", "0")
+    config.settings.cache_clear()
+    try:
+        state = run_agent(RulesReasoner(), OracleReviewer(), run_id="test-no-profiling")
+    finally:
+        monkeypatch.delenv("DQ_PROFILING")
+        config.settings.cache_clear()
+    assert state["status"] == "green"
