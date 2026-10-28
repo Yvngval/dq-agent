@@ -110,7 +110,8 @@ def inject_duplicate_rows(con, rng):
 
 def inject_altitude_outlier(con, rng):
     column = rng.choice(["altitude_1", "altitude_2"])
-    ids = _pick_rows(con, rng, where=f"{column} IS NOT NULL", low=5, high=30)
+    # Altitudes >= 0 seulement : une erreur d'unité sur une altitude négative resterait plausible.
+    ids = _pick_rows(con, rng, where=f"{column} >= 0", low=5, high=30)
     glitch = rng.choice(["sentinel", "feet_x100"])
     if glitch == "sentinel":
         con.execute(f"UPDATE raw.flights SET {column} = 99999.0 WHERE _row_id IN {_in(ids)}")
