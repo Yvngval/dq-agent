@@ -37,4 +37,5 @@ jobs:
       - name: Agent de bout en bout (raisonneur à base de règles)
         run: |
           uv run --no-sync dq inject duplicate_rows --seed 1
-          uv run --no-sync dq evaluate --provider rules --seeds 1 --scenario duplicate_rows --scenario schema_drift_rename
+          uv run --no-sync dq evaluate --provider rules --seeds 1 --scenario duplicate_rows \
+            --scenario schema_drift_rename --scenario future_timestamps --scenario volume_drop
